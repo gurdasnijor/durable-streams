@@ -28,6 +28,13 @@ export interface WebhookJwks {
 }
 
 /**
+ * Generate a webhook secret for a subscription.
+ */
+export function generateWebhookSecret(): string {
+  return `whsec_${randomBytes(32).toString(`hex`)}`
+}
+
+/**
  * Generate a unique wake ID.
  */
 export function generateWakeId(): string {
@@ -79,11 +86,22 @@ export function getWebhookJwks(): WebhookJwks {
 
 /**
  * Sign a webhook payload for the Webhook-Signature header.
- * Format: t=<timestamp>,kid=<key_id>,ed25519=<base64url_signature>
+ *
+ * Without a secret, signs with the upstream Ed25519/JWKS scheme.
+ * With a secret, signs with the PR #343 HMAC scheme used by the
+ * layered webhook conformance tests.
  */
-export function signWebhookPayload(body: string): string {
+export function signWebhookPayload(body: string): string
+export function signWebhookPayload(body: string, secret: string): string
+export function signWebhookPayload(body: string, secret?: string): string {
   const timestamp = Math.floor(Date.now() / 1000)
   const payload = `${timestamp}.${body}`
+
+  if (secret) {
+    const signature = createHmac(`sha256`, secret).update(payload).digest(`hex`)
+    return `t=${timestamp},sha256=${signature}`
+  }
+
   const signature = sign(
     null,
     Buffer.from(payload),
@@ -94,13 +112,49 @@ export function signWebhookPayload(body: string): string {
 
 /**
  * Verify a webhook signature.
+ *
+ * Passing a string verifies the PR #343 HMAC scheme. Passing a JWKS, or
+ * omitting the third argument, verifies the upstream Ed25519/JWKS scheme.
  */
 export function verifyWebhookSignature(
   body: string,
   signatureHeader: string,
-  jwks: WebhookJwks = getWebhookJwks(),
+  jwks?: WebhookJwks,
+  toleranceSeconds?: number
+): boolean
+export function verifyWebhookSignature(
+  body: string,
+  signatureHeader: string,
+  secret: string,
+  toleranceSeconds?: number
+): boolean
+export function verifyWebhookSignature(
+  body: string,
+  signatureHeader: string,
+  verifier: WebhookJwks | string = getWebhookJwks(),
   toleranceSeconds = 300
 ): boolean {
+  if (typeof verifier === `string`) {
+    const match = signatureHeader.match(/t=(\d+),sha256=([a-f0-9]+)/)
+    if (!match) return false
+
+    const [, timestamp, signature] = match
+    const ts = parseInt(timestamp!, 10)
+    const now = Math.floor(Date.now() / 1000)
+    if (Math.abs(now - ts) > toleranceSeconds) return false
+
+    const payload = `${timestamp}.${body}`
+    const expected = createHmac(`sha256`, verifier)
+      .update(payload)
+      .digest(`hex`)
+
+    try {
+      return timingSafeEqual(Buffer.from(signature!), Buffer.from(expected))
+    } catch {
+      return false
+    }
+  }
+
   const match = signatureHeader.match(
     /^t=(\d+),kid=([^,]+),ed25519=([A-Za-z0-9_-]+)$/
   )
@@ -108,11 +162,10 @@ export function verifyWebhookSignature(
 
   const [, timestamp, kid, signature] = match
   const ts = parseInt(timestamp!, 10)
-
   const now = Math.floor(Date.now() / 1000)
   if (Math.abs(now - ts) > toleranceSeconds) return false
 
-  const jwk = jwks.keys.find((key) => key.kid === kid)
+  const jwk = verifier.keys.find((key) => key.kid === kid)
   if (!jwk) return false
 
   try {

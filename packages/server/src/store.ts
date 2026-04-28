@@ -885,9 +885,9 @@ export class StreamStore {
    * Close a stream without appending data.
    * @returns The final offset, or null if stream doesn't exist
    */
-  closeStream(
+  async closeStream(
     path: string
-  ): { finalOffset: string; alreadyClosed: boolean } | null {
+  ): Promise<{ finalOffset: string; alreadyClosed: boolean } | null> {
     const stream = this.getIfNotExpired(path)
     if (!stream) {
       return null

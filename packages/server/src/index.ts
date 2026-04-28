@@ -38,4 +38,33 @@ export type {
   SubscriptionStreamLink,
   SubscriptionType,
 } from "./subscription-types"
+export { ConsumerManager } from "./consumer-manager"
+export { ConsumerRoutes } from "./consumer-routes"
+export { PullWakeManager } from "./pull-wake-manager"
+export type {
+  WakeEvent,
+  ClaimedEvent,
+  PullWakeEvent,
+} from "./pull-wake-manager"
+export { WebhookManager } from "./webhook-manager"
+export { WebhookRoutes } from "./webhook-routes"
+export { WebhookStore } from "./webhook-store"
+export type {
+  AckRequest,
+  AcquireResponse,
+  Consumer,
+  ConsumerError,
+  ConsumerInfo,
+  ReleaseResponse,
+  WakePreference,
+} from "./consumer-types"
+export type {
+  CallbackError,
+  CallbackErrorCode,
+  CallbackRequest,
+  CallbackResponse,
+  CallbackSuccess,
+  Subscription,
+  WebhookConsumer,
+} from "./webhook-types"
 export { globMatch } from "./glob"

@@ -26,6 +26,9 @@ export interface ConformanceTestOptions {
   subscriptions?: boolean
 }
 
+export { runConsumerConformanceTests } from "./consumer-tests"
+export { runPullWakeConformanceTests } from "./pull-wake-tests"
+
 /**
  * Helper to fetch SSE stream and read until a condition is met.
  * Handles AbortController, timeout, and cleanup automatically.

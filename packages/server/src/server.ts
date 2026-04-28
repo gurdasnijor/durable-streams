@@ -27,8 +27,13 @@ import {
 import { StreamStore } from "./store"
 import { FileBackedStreamStore } from "./file-store"
 import { generateResponseCursor } from "./cursor"
+import { ConsumerManager } from "./consumer-manager"
+import { ConsumerRoutes } from "./consumer-routes"
+import { PullWakeManager } from "./pull-wake-manager"
 import { SubscriptionManager } from "./subscription-manager"
 import { SubscriptionRoutes } from "./subscription-routes"
+import { WebhookManager } from "./webhook-manager"
+import { WebhookRoutes } from "./webhook-routes"
 import { serverLog } from "./log"
 import type { CursorOptions } from "./cursor"
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
@@ -175,8 +180,13 @@ export class DurableStreamTestServer {
   private isShuttingDown = false
   /** Injected faults for testing retry/resilience */
   private injectedFaults = new Map<string, InjectedFault>()
+  private consumerManager: ConsumerManager | null = null
+  private consumerRoutes: ConsumerRoutes | null = null
+  private pullWakeManager: PullWakeManager | null = null
   private subscriptionManager: SubscriptionManager | null = null
   private subscriptionRoutes: SubscriptionRoutes | null = null
+  private webhookManager: WebhookManager | null = null
+  private webhookRoutes: WebhookRoutes | null = null
 
   constructor(options: TestServerOptions = {}) {
     // Choose store based on dataDir option
@@ -241,6 +251,34 @@ export class DurableStreamTestServer {
         this.subscriptionRoutes = new SubscriptionRoutes(
           this.subscriptionManager
         )
+
+        this.consumerManager = new ConsumerManager({
+          getTailOffset: (path: string) => {
+            const stream = this.store.get(path)
+            return stream ? stream.currentOffset : `-1`
+          },
+        })
+        this.pullWakeManager = new PullWakeManager({
+          consumerManager: this.consumerManager,
+          streamStore: this.store,
+        })
+
+        if (this.options.webhooks) {
+          this.webhookManager = new WebhookManager({
+            callbackBaseUrl: this._url!,
+            getTailOffset: (path: string) => {
+              const stream = this.store.get(path)
+              return stream ? stream.currentOffset : `-1`
+            },
+            consumerManager: this.consumerManager,
+          })
+          this.webhookRoutes = new WebhookRoutes(this.webhookManager)
+        }
+
+        this.consumerRoutes = new ConsumerRoutes(this.consumerManager, {
+          webhookManager: this.webhookManager,
+          pullWakeManager: this.pullWakeManager,
+        })
         resolve(this._url!)
       })
     })
@@ -256,6 +294,23 @@ export class DurableStreamTestServer {
 
     // Mark as shutting down to stop SSE handlers
     this.isShuttingDown = true
+
+    if (this.pullWakeManager) {
+      this.pullWakeManager.shutdown()
+      this.pullWakeManager = null
+    }
+
+    if (this.consumerManager) {
+      this.consumerManager.shutdown()
+      this.consumerManager = null
+      this.consumerRoutes = null
+    }
+
+    if (this.webhookManager) {
+      this.webhookManager.shutdown()
+      this.webhookManager = null
+      this.webhookRoutes = null
+    }
 
     if (this.subscriptionManager) {
       this.subscriptionManager.shutdown()
@@ -345,6 +400,12 @@ export class DurableStreamTestServer {
    */
   clearInjectedFaults(): void {
     this.injectedFaults.clear()
+  }
+
+  setEnrichPayload(fn: WebhookManager[`enrichPayload`] | undefined): void {
+    if (this.webhookManager) {
+      this.webhookManager.enrichPayload = fn
+    }
   }
 
   /**
@@ -514,6 +575,27 @@ export class DurableStreamTestServer {
     if (this.subscriptionRoutes && method) {
       const handled = await this.subscriptionRoutes.handleRequest(
         method,
+        path,
+        req,
+        res
+      )
+      if (handled) return
+    }
+
+    if (this.consumerRoutes && method) {
+      const handled = await this.consumerRoutes.handleRequest(
+        method,
+        path,
+        req,
+        res
+      )
+      if (handled) return
+    }
+
+    if (this.webhookRoutes && method) {
+      const handled = await this.webhookRoutes.handleRequest(
+        method,
+        url,
         path,
         req,
         res
@@ -759,6 +841,10 @@ export class DurableStreamTestServer {
           timestamp: Date.now(),
         })
       )
+    }
+
+    if (isNew && this.webhookManager) {
+      this.webhookManager.onStreamCreated(path)
     }
 
     if (isNew && body.length > 0) {
@@ -1471,7 +1557,7 @@ export class DurableStreamTestServer {
       }
 
       // Close-only without producer headers (simple idempotent close)
-      const closeResult = this.store.closeStream(path)
+      const closeResult = await Promise.resolve(this.store.closeStream(path))
       if (!closeResult) {
         res.writeHead(404, { "content-type": `text/plain` })
         res.end(`Stream not found`)
@@ -1650,11 +1736,26 @@ export class DurableStreamTestServer {
   }
 
   private async notifyStreamAppend(path: string): Promise<void> {
-    if (!this.subscriptionManager) return
-    try {
-      await this.subscriptionManager.onStreamAppend(path)
-    } catch (err) {
-      serverLog.error(`[server] subscription append hook failed:`, err)
+    if (this.subscriptionManager) {
+      try {
+        await this.subscriptionManager.onStreamAppend(path)
+      } catch (err) {
+        serverLog.error(`[server] subscription append hook failed:`, err)
+      }
+    }
+    if (this.webhookManager) {
+      try {
+        this.webhookManager.onStreamAppend(path)
+      } catch (err) {
+        serverLog.error(`[server] webhook append hook failed:`, err)
+      }
+    }
+    if (this.pullWakeManager) {
+      try {
+        this.pullWakeManager.onStreamAppend(path)
+      } catch (err) {
+        serverLog.error(`[server] pull-wake append hook failed:`, err)
+      }
     }
   }
 
@@ -1690,6 +1791,12 @@ export class DurableStreamTestServer {
 
     if (this.subscriptionManager) {
       this.subscriptionManager.onStreamDeleted(path)
+    }
+    if (this.consumerManager) {
+      this.consumerManager.onStreamDeleted(path)
+    }
+    if (this.webhookManager) {
+      this.webhookManager.onStreamDeleted(path)
     }
 
     res.writeHead(204)
