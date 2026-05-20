@@ -2,13 +2,29 @@
  * Cryptographic utilities for webhook signatures and callback tokens.
  */
 
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  generateKeyPairSync,
+  randomBytes,
+  sign,
+  timingSafeEqual,
+  verify as verifySignature,
+} from "node:crypto"
+import type { JsonWebKey as NodeJsonWebKey } from "node:crypto"
 
-/**
- * Generate a webhook secret for a subscription.
- */
-export function generateWebhookSecret(): string {
-  return `whsec_${randomBytes(32).toString(`hex`)}`
+export interface WebhookPublicJwk {
+  kty: `OKP`
+  crv: `Ed25519`
+  x: string
+  kid: string
+  use: `sig`
+  alg: `EdDSA`
+}
+
+export interface WebhookJwks {
+  keys: Array<WebhookPublicJwk>
 }
 
 /**
@@ -18,15 +34,62 @@ export function generateWakeId(): string {
   return `w_${randomBytes(12).toString(`hex`)}`
 }
 
+const WEBHOOK_KEYPAIR = generateKeyPairSync(`ed25519`)
+const WEBHOOK_PUBLIC_JWK = buildWebhookPublicJwk()
+
+function buildWebhookPublicJwk(): WebhookPublicJwk {
+  const exported = WEBHOOK_KEYPAIR.publicKey.export({ format: `jwk` }) as {
+    kty?: string
+    crv?: string
+    x?: string
+  }
+
+  if (exported.kty !== `OKP` || exported.crv !== `Ed25519` || !exported.x) {
+    throw new Error(`Failed to export Ed25519 webhook signing key`)
+  }
+
+  const thumbprintInput = JSON.stringify({
+    crv: exported.crv,
+    kty: exported.kty,
+    x: exported.x,
+  })
+  const kid = `ds_${createHash(`sha256`)
+    .update(thumbprintInput)
+    .digest(`base64url`)}`
+
+  return {
+    kty: `OKP`,
+    crv: `Ed25519`,
+    x: exported.x,
+    kid,
+    use: `sig`,
+    alg: `EdDSA`,
+  }
+}
+
+export function getWebhookSigningKeyId(): string {
+  return WEBHOOK_PUBLIC_JWK.kid
+}
+
+export function getWebhookJwks(): WebhookJwks {
+  return {
+    keys: [{ ...WEBHOOK_PUBLIC_JWK }],
+  }
+}
+
 /**
  * Sign a webhook payload for the Webhook-Signature header.
- * Format: t=<timestamp>,sha256=<hex_signature>
+ * Format: t=<timestamp>,kid=<key_id>,ed25519=<base64url_signature>
  */
-export function signWebhookPayload(body: string, secret: string): string {
+export function signWebhookPayload(body: string): string {
   const timestamp = Math.floor(Date.now() / 1000)
   const payload = `${timestamp}.${body}`
-  const signature = createHmac(`sha256`, secret).update(payload).digest(`hex`)
-  return `t=${timestamp},sha256=${signature}`
+  const signature = sign(
+    null,
+    Buffer.from(payload),
+    WEBHOOK_KEYPAIR.privateKey
+  ).toString(`base64url`)
+  return `t=${timestamp},kid=${WEBHOOK_PUBLIC_JWK.kid},ed25519=${signature}`
 }
 
 /**
@@ -35,23 +98,34 @@ export function signWebhookPayload(body: string, secret: string): string {
 export function verifyWebhookSignature(
   body: string,
   signatureHeader: string,
-  secret: string,
+  jwks: WebhookJwks = getWebhookJwks(),
   toleranceSeconds = 300
 ): boolean {
-  const match = signatureHeader.match(/t=(\d+),sha256=([a-f0-9]+)/)
+  const match = signatureHeader.match(
+    /^t=(\d+),kid=([^,]+),ed25519=([A-Za-z0-9_-]+)$/
+  )
   if (!match) return false
 
-  const [, timestamp, signature] = match
+  const [, timestamp, kid, signature] = match
   const ts = parseInt(timestamp!, 10)
 
   const now = Math.floor(Date.now() / 1000)
   if (Math.abs(now - ts) > toleranceSeconds) return false
 
-  const payload = `${timestamp}.${body}`
-  const expected = createHmac(`sha256`, secret).update(payload).digest(`hex`)
+  const jwk = jwks.keys.find((key) => key.kid === kid)
+  if (!jwk) return false
 
   try {
-    return timingSafeEqual(Buffer.from(signature!), Buffer.from(expected))
+    const publicKey = createPublicKey({
+      key: jwk as unknown as NodeJsonWebKey,
+      format: `jwk`,
+    })
+    return verifySignature(
+      null,
+      Buffer.from(`${timestamp}.${body}`),
+      publicKey,
+      Buffer.from(signature!, `base64url`)
+    )
   } catch {
     return false
   }

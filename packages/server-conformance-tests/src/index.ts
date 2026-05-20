@@ -6,6 +6,7 @@
  */
 
 import { createServer as createHttpServer } from "node:http"
+import { createPublicKey, verify as verifySignature } from "node:crypto"
 import { describe, expect, test, vi } from "vitest"
 import * as fc from "fast-check"
 import {
@@ -14,6 +15,7 @@ import {
   STREAM_SEQ_HEADER,
   STREAM_UP_TO_DATE_HEADER,
 } from "@durable-streams/client"
+import type { JsonWebKey as NodeJsonWebKey } from "node:crypto"
 
 export interface ConformanceTestOptions {
   /** Base URL of the server to test */
@@ -148,16 +150,19 @@ async function createWebhookReceiver(opts?: {
   url: string
   received: Array<{
     body: Record<string, unknown>
+    rawBody: string
     signature: string | null
   }>
   waitForRequest: (timeoutMs?: number) => Promise<{
     body: Record<string, unknown>
+    rawBody: string
     signature: string | null
   }>
   close: () => Promise<void>
 }> {
   const received: Array<{
     body: Record<string, unknown>
+    rawBody: string
     signature: string | null
   }> = []
   const waiters: Array<() => void> = []
@@ -166,13 +171,12 @@ async function createWebhookReceiver(opts?: {
     const chunks: Array<Buffer> = []
     req.on(`data`, (chunk: Buffer) => chunks.push(chunk))
     req.on(`end`, () => {
-      const body = JSON.parse(Buffer.concat(chunks).toString(`utf8`)) as Record<
-        string,
-        unknown
-      >
+      const rawBody = Buffer.concat(chunks).toString(`utf8`)
+      const body = JSON.parse(rawBody) as Record<string, unknown>
       const signatureHeader = req.headers[`webhook-signature`]
       received.push({
         body,
+        rawBody,
         signature: typeof signatureHeader === `string` ? signatureHeader : null,
       })
       for (const waiter of waiters.splice(0)) waiter()
@@ -213,6 +217,56 @@ async function createWebhookReceiver(opts?: {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     },
   }
+}
+
+interface WebhookPublicJwk {
+  kty: string
+  crv: string
+  x: string
+  kid: string
+  use?: string
+  alg?: string
+}
+
+interface WebhookJwks {
+  keys: Array<WebhookPublicJwk>
+}
+
+async function fetchWebhookJwks(url: string): Promise<WebhookJwks> {
+  const res = await fetch(url)
+  expect(res.status).toBe(200)
+  expect(res.headers.get(`content-type`)).toContain(`application/jwk-set+json`)
+  return (await res.json()) as WebhookJwks
+}
+
+function verifyWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  jwks: WebhookJwks
+): boolean {
+  if (!signatureHeader) return false
+  const match = signatureHeader.match(
+    /^t=(\d+),kid=([^,]+),ed25519=([A-Za-z0-9_-]+)$/
+  )
+  if (!match) return false
+
+  const [, timestamp, kid, signature] = match
+  const key = jwks.keys.find((candidate) => candidate.kid === kid)
+  if (!key) return false
+
+  const now = Math.floor(Date.now() / 1000)
+  if (Math.abs(now - Number(timestamp)) > 300) return false
+
+  const publicKey = createPublicKey({
+    key: key as unknown as NodeJsonWebKey,
+    format: `jwk`,
+  })
+  return verifySignature(
+    null,
+    Buffer.from(`${timestamp}.${rawBody}`),
+    publicKey,
+    Buffer.from(signature!, `base64url`)
+  )
 }
 
 async function waitForCondition(
@@ -10182,7 +10236,28 @@ export function runConformanceTests(options: ConformanceTestOptions): void {
         })
         expect(create.status).toBe(201)
         const created = (await create.json()) as Record<string, unknown>
-        expect(created.webhook_secret).toMatch(/^whsec_/)
+        expect(created.webhook_secret).toBeUndefined()
+        const createdWebhook = created.webhook as {
+          url: string
+          signing: { alg: string; kid: string; jwks_url: string }
+        }
+        expect(createdWebhook.url).toBe(receiver.url)
+        expect(createdWebhook.signing.alg).toBe(`ed25519`)
+        expect(createdWebhook.signing.kid).toMatch(/^ds_/)
+        expect(createdWebhook.signing.jwks_url).toBe(
+          streamUrl(`__ds/jwks.json`)
+        )
+
+        const jwks = await fetchWebhookJwks(createdWebhook.signing.jwks_url)
+        expect(
+          jwks.keys.some(
+            (key) =>
+              key.kid === createdWebhook.signing.kid &&
+              key.kty === `OKP` &&
+              key.crv === `Ed25519` &&
+              key.alg === `EdDSA`
+          )
+        ).toBe(true)
 
         const confirm = await fetch(subUrl(id), {
           method: `PUT`,
@@ -10244,6 +10319,10 @@ export function runConformanceTests(options: ConformanceTestOptions): void {
           }),
         })
         expect(create.status).toBe(201)
+        const created = (await create.json()) as {
+          webhook: { signing: { jwks_url: string } }
+        }
+        const jwks = await fetchWebhookJwks(created.webhook.signing.jwks_url)
 
         await fetch(streamUrl(path), {
           method: `PUT`,
@@ -10252,7 +10331,16 @@ export function runConformanceTests(options: ConformanceTestOptions): void {
         })
 
         const notification = await receiver.waitForRequest()
-        expect(notification.signature).toMatch(/^t=\d+,sha256=/)
+        expect(notification.signature).toMatch(
+          /^t=\d+,kid=.+,ed25519=[A-Za-z0-9_-]+$/
+        )
+        expect(
+          verifyWebhookSignature(
+            notification.rawBody,
+            notification.signature,
+            jwks
+          )
+        ).toBe(true)
         expect(notification.body.subscription_id).toBe(id)
         expect(notification.body.callback_url).toBe(
           streamUrl(`__ds/subscriptions/${id}/callback`)

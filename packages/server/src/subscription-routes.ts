@@ -15,6 +15,7 @@ import type {
 
 const RESERVED_CONTROL_PREFIX = `/v1/stream/__ds`
 const SUBSCRIPTION_PREFIX = `${RESERVED_CONTROL_PREFIX}/subscriptions/`
+const JWKS_PATH = `${RESERVED_CONTROL_PREFIX}/jwks.json`
 
 interface ParsedRoute {
   subscriptionId: string
@@ -55,6 +56,11 @@ export class SubscriptionRoutes {
     req: IncomingMessage,
     res: ServerResponse
   ): Promise<boolean> {
+    if (path === JWKS_PATH) {
+      this.handleJwks(method, res)
+      return true
+    }
+
     const route = this.parseRoute(path)
     if (!route) {
       if (
@@ -136,7 +142,7 @@ export class SubscriptionRoutes {
       this.writeJson(
         res,
         result.created ? 201 : 200,
-        this.manager.serialize(result.subscription, result.created)
+        this.manager.serialize(result.subscription)
       )
       return
     }
@@ -152,7 +158,7 @@ export class SubscriptionRoutes {
         )
         return
       }
-      this.writeJson(res, 200, this.manager.serialize(subscription, false))
+      this.writeJson(res, 200, this.manager.serialize(subscription))
       return
     }
 
@@ -164,6 +170,18 @@ export class SubscriptionRoutes {
     }
 
     this.methodNotAllowed(res)
+  }
+
+  private handleJwks(method: string, res: ServerResponse): void {
+    if (method !== `GET`) {
+      this.methodNotAllowed(res)
+      return
+    }
+    res.writeHead(200, {
+      "content-type": `application/jwk-set+json`,
+      "cache-control": `public, max-age=300`,
+    })
+    res.end(JSON.stringify(this.manager.getWebhookJwks()))
   }
 
   private async handleStreams(

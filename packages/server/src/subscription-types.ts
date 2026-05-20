@@ -10,7 +10,6 @@ export interface SubscriptionStreamLink {
 
 export interface SubscriptionWebhookConfig {
   url: string
-  secret: string
 }
 
 export interface SubscriptionRecord {

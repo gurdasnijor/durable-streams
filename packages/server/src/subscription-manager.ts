@@ -3,7 +3,8 @@ import { isIP } from "node:net"
 import {
   generateCallbackToken,
   generateWakeId,
-  generateWebhookSecret,
+  getWebhookJwks,
+  getWebhookSigningKeyId,
   signWebhookPayload,
   validateCallbackToken,
 } from "./crypto"
@@ -215,9 +216,7 @@ export class SubscriptionManager {
       id,
       type: input.type,
       pattern: input.pattern,
-      webhook: input.webhook
-        ? { url: input.webhook.url, secret: generateWebhookSecret() }
-        : undefined,
+      webhook: input.webhook ? { url: input.webhook.url } : undefined,
       wake_stream: input.wake_stream,
       lease_ttl_ms: input.lease_ttl_ms,
       description: input.description,
@@ -494,10 +493,7 @@ export class SubscriptionManager {
     return { status: 204 }
   }
 
-  serialize(
-    subscription: SubscriptionRecord,
-    includeSecret: boolean
-  ): Record<string, unknown> {
+  serialize(subscription: SubscriptionRecord): Record<string, unknown> {
     return {
       id: subscription.id,
       subscription_id: subscription.id,
@@ -511,20 +507,19 @@ export class SubscriptionManager {
       webhook: subscription.webhook
         ? {
             url: subscription.webhook.url,
-            ...(includeSecret
-              ? { webhook_secret: subscription.webhook.secret }
-              : {}),
+            signing: this.webhookSigningMetadata(),
           }
         : undefined,
-      ...(includeSecret && subscription.webhook
-        ? { webhook_secret: subscription.webhook.secret }
-        : {}),
       wake_stream: subscription.wake_stream,
       lease_ttl_ms: subscription.lease_ttl_ms,
       created_at: subscription.created_at,
       status: subscription.status,
       description: subscription.description,
     }
+  }
+
+  getWebhookJwks(): ReturnType<typeof getWebhookJwks> {
+    return getWebhookJwks()
   }
 
   shutdown(): void {
@@ -589,10 +584,7 @@ export class SubscriptionManager {
 
     const headers = {
       "content-type": `application/json`,
-      "webhook-signature": signWebhookPayload(
-        body,
-        subscription.webhook.secret
-      ),
+      "webhook-signature": signWebhookPayload(body),
     }
 
     try {
@@ -835,6 +827,19 @@ export class SubscriptionManager {
       this.callbackBaseUrl
     )
     return url.toString()
+  }
+
+  private webhookJwksUrl(): string {
+    const url = new URL(`/v1/stream/__ds/jwks.json`, this.callbackBaseUrl)
+    return url.toString()
+  }
+
+  private webhookSigningMetadata(): Record<string, string> {
+    return {
+      alg: `ed25519`,
+      kid: getWebhookSigningKeyId(),
+      jwks_url: this.webhookJwksUrl(),
+    }
   }
 
   private extendLease(subscription: SubscriptionRecord): void {
