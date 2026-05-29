@@ -2,6 +2,7 @@
 title: Python client
 description: >-
   Python client for Durable Streams with sync and async APIs. Generator-based stream consumption and IdempotentProducer for exactly-once writes.
+outline: [2, 3]
 ---
 
 # Python client
@@ -13,6 +14,8 @@ It gives you:
 - `stream()` and `astream()` for read-only stream consumption
 - `DurableStream` and `AsyncDurableStream` for read/write operations
 - `IdempotentProducer` for exactly-once writes with batching and retries
+
+<IntentLink intent="create" serviceType="streams" serviceVariant="json" />
 
 ## Install
 

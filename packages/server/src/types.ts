@@ -68,6 +68,13 @@ export interface Stream {
   createdAt: number
 
   /**
+   * Timestamp of the last read or write (for TTL renewal).
+   * Initialized to createdAt. Updated on GET reads and POST appends.
+   * HEAD requests do NOT update this field.
+   */
+  lastAccessedAt: number
+
+  /**
    * Producer states for idempotent writes.
    * Maps producer ID to their epoch and sequence state.
    */
@@ -88,6 +95,28 @@ export interface Stream {
     epoch: number
     seq: number
   }
+
+  /**
+   * Source stream path (set when this stream is a fork).
+   */
+  forkedFrom?: string
+
+  /**
+   * Divergence offset from the source stream.
+   * Format: "0000000000000000_0000000000000000"
+   */
+  forkOffset?: string
+
+  /**
+   * Number of forks referencing this stream.
+   * Defaults to 0.
+   */
+  refCount: number
+
+  /**
+   * Whether this stream is logically deleted but retained for fork readers.
+   */
+  softDeleted?: boolean
 }
 
 /**
@@ -177,6 +206,14 @@ export interface TestServerOptions {
    * Default: October 9, 2024 00:00:00 UTC.
    */
   cursorEpoch?: Date
+
+  /**
+   * Enable webhook subscriptions.
+   * Pull-wake subscription routes are always mounted, but type=webhook creates
+   * are rejected unless this is true.
+   * Default: false.
+   */
+  webhooks?: boolean
 }
 
 /**

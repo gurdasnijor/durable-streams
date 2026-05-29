@@ -123,7 +123,7 @@ describe(`DurableStream`, () => {
       expect(result.etag).toBe(`abc123`)
     })
 
-    it(`should throw FetchError on 404`, async () => {
+    it(`should return exists: false on 404`, async () => {
       mockFetch.mockResolvedValue(
         new Response(null, {
           status: 404,
@@ -136,9 +136,8 @@ describe(`DurableStream`, () => {
         fetch: mockFetch,
       })
 
-      // Note: The backoff wrapper throws FetchError for 4xx errors
-      // before DurableStream can convert to DurableStreamError
-      await expect(stream.head()).rejects.toThrow(FetchError)
+      const result = await stream.head()
+      expect(result).toEqual({ exists: false })
     })
 
     it(`should update contentType on instance`, async () => {
@@ -240,7 +239,7 @@ describe(`DurableStream`, () => {
       await handle.stream({ live: `long-poll` })
 
       const calledUrl = mockFetch.mock.calls[0]![0] as string
-      expect(calledUrl).toContain(`live=long-poll`)
+      expect(calledUrl).not.toContain(`live=`)
     })
 
     it(`should expose upToDate on response`, async () => {

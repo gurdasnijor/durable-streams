@@ -20,10 +20,19 @@ import {
   STREAM_OFFSET_HEADER,
 } from "./constants"
 import { DurableStreamError, FetchError } from "./error"
-import { concatUint8Arrays, normalizeContentType } from "./utils"
+import {
+  concatUint8Arrays,
+  normalizeContentType,
+  resolveHeaders,
+} from "./utils"
 import type { queueAsPromised } from "fastq"
 import type { DurableStream } from "./stream"
-import type { CloseResult, IdempotentProducerOptions, Offset } from "./types"
+import type {
+  CloseResult,
+  HeadersRecord,
+  IdempotentProducerOptions,
+  Offset,
+} from "./types"
 
 /**
  * Error thrown when a producer's epoch is stale (zombie fencing).
@@ -120,6 +129,7 @@ export class IdempotentProducer {
   readonly #maxBatchBytes: number
   readonly #lingerMs: number
   readonly #fetchClient: typeof fetch
+  readonly #headers?: HeadersRecord
   readonly #signal?: AbortSignal
   readonly #onError?: (error: Error) => void
 
@@ -134,6 +144,7 @@ export class IdempotentProducer {
   #closed = false
   #closeResult: CloseResult | null = null
   #pendingFinalMessage?: Uint8Array | string
+  #lastSuccessfulOffset: Offset | undefined
 
   // When autoClaim is true, we must wait for the first batch to complete
   // before allowing pipelining (to know what epoch was claimed)
@@ -196,6 +207,7 @@ export class IdempotentProducer {
     this.#maxBatchBytes = maxBatchBytes
     this.#lingerMs = lingerMs
     this.#signal = opts?.signal
+    this.#headers = opts?.headers
     this.#onError = opts?.onError
     this.#fetchClient =
       opts?.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args))
@@ -412,14 +424,13 @@ export class IdempotentProducer {
     // We only increment #nextSeq after a successful response
     const seqForThisRequest = this.#nextSeq
 
-    // Build headers with producer info and Stream-Closed
-    const headers: Record<string, string> = {
+    const headers = await this.#buildHeaders({
       "content-type": contentType,
       [PRODUCER_ID_HEADER]: this.#producerId,
       [PRODUCER_EPOCH_HEADER]: this.#epoch.toString(),
       [PRODUCER_SEQ_HEADER]: seqForThisRequest.toString(),
       [STREAM_CLOSED_HEADER]: `true`,
-    }
+    })
 
     const response = await this.#fetchClient(this.#stream.url, {
       method: `POST`,
@@ -432,6 +443,7 @@ export class IdempotentProducer {
     if (response.status === 200 || response.status === 204) {
       this.#nextSeq = seqForThisRequest + 1
       const finalOffset = response.headers.get(STREAM_OFFSET_HEADER) ?? ``
+      this.#recordSuccessfulOffset(finalOffset)
       return { finalOffset }
     }
 
@@ -498,6 +510,14 @@ export class IdempotentProducer {
     return this.#queue.length()
   }
 
+  /**
+   * The greatest non-empty stream offset returned by a successful producer
+   * append or close request.
+   */
+  get lastSuccessfulOffset(): Offset | undefined {
+    return this.#lastSuccessfulOffset
+  }
+
   // ============================================================================
   // Private implementation
   // ============================================================================
@@ -542,7 +562,8 @@ export class IdempotentProducer {
     const epoch = this.#epoch
 
     try {
-      await this.#doSendBatch(batch, seq, epoch)
+      const result = await this.#doSendBatch(batch, seq, epoch)
+      this.#recordSuccessfulOffset(result.offset)
 
       // Mark epoch as claimed after first successful batch
       // This enables full pipelining for subsequent batches
@@ -561,6 +582,15 @@ export class IdempotentProducer {
         this.#onError(error as Error)
       }
       throw error
+    }
+  }
+
+  #recordSuccessfulOffset(offset: Offset | undefined): void {
+    if (
+      offset &&
+      (!this.#lastSuccessfulOffset || offset > this.#lastSuccessfulOffset)
+    ) {
+      this.#lastSuccessfulOffset = offset
     }
   }
 
@@ -669,12 +699,13 @@ export class IdempotentProducer {
     }
 
     const url = this.#stream.url
-    const headers: Record<string, string> = {
+
+    const headers = await this.#buildHeaders({
       "content-type": contentType,
       [PRODUCER_ID_HEADER]: this.#producerId,
       [PRODUCER_EPOCH_HEADER]: epoch.toString(),
       [PRODUCER_SEQ_HEADER]: seq.toString(),
-    }
+    })
 
     const response = await this.#fetchClient(url, {
       method: `POST`,
@@ -744,6 +775,18 @@ export class IdempotentProducer {
     }
 
     throw await FetchError.fromResponse(response, url)
+  }
+
+  async #buildHeaders(
+    protocolHeaders: Record<string, string>
+  ): Promise<Record<string, string>> {
+    const streamHeaders = await this.#stream.resolveHeaders()
+    const producerHeaders = await resolveHeaders(this.#headers)
+    return {
+      ...streamHeaders,
+      ...producerHeaders,
+      ...protocolHeaders,
+    }
   }
 
   /**

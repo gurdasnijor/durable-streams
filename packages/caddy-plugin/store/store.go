@@ -29,6 +29,13 @@ var (
 	ErrPartialProducer = errors.New("all producer headers must be provided together")
 )
 
+// Fork-related errors
+var (
+	ErrStreamSoftDeleted = errors.New("stream is soft-deleted")
+	ErrInvalidForkOffset = errors.New("fork offset beyond source stream length")
+	ErrRefCountUnderflow = errors.New("reference count underflow")
+)
+
 // ProducerState tracks the epoch and sequence for an idempotent producer
 type ProducerState struct {
 	Epoch       int64 // Client-declared epoch
@@ -151,7 +158,9 @@ type CreateOptions struct {
 	TTLSeconds  *int64
 	ExpiresAt   *time.Time
 	InitialData []byte
-	Closed      bool // Create stream in closed state
+	Closed      bool    // Create stream in closed state
+	ForkedFrom  string  // Source stream path (fork creation)
+	ForkOffset  *Offset // Fork offset (nil = source's current tail)
 }
 
 // AppendOptions contains options for appending to a stream
@@ -184,16 +193,21 @@ type Message struct {
 
 // StreamMetadata contains metadata about a stream
 type StreamMetadata struct {
-	Path          string
-	ContentType   string
-	CurrentOffset Offset
-	LastSeq       string // Last Stream-Seq value
-	TTLSeconds    *int64
-	ExpiresAt     *time.Time
-	CreatedAt     time.Time
-	Producers     map[string]*ProducerState // Producer ID -> state
-	Closed        bool                      // Stream is closed (no more appends allowed)
-	ClosedBy      *ClosedByProducer         // Producer that closed the stream (for idempotent duplicate detection)
+	Path           string
+	ContentType    string
+	CurrentOffset  Offset
+	LastSeq        string // Last Stream-Seq value
+	TTLSeconds     *int64
+	ExpiresAt      *time.Time
+	CreatedAt      time.Time
+	LastAccessedAt time.Time
+	Producers      map[string]*ProducerState // Producer ID -> state
+	Closed         bool                      // Stream is closed (no more appends allowed)
+	ClosedBy       *ClosedByProducer         // Producer that closed the stream (for idempotent duplicate detection)
+	ForkedFrom     string                    // Source stream path (empty if not a fork)
+	ForkOffset     Offset                    // Divergence point: offsets < ForkOffset come from source
+	RefCount       int32                     // Number of forks referencing this stream
+	SoftDeleted    bool                      // Logically deleted but retained for fork readers
 }
 
 // IsExpired checks if the stream has expired based on TTL or ExpiresAt
@@ -207,7 +221,7 @@ func (m *StreamMetadata) IsExpired() bool {
 
 	// Check TTL-based expiry
 	if m.TTLSeconds != nil {
-		expiryTime := m.CreatedAt.Add(time.Duration(*m.TTLSeconds) * time.Second)
+		expiryTime := m.LastAccessedAt.Add(time.Duration(*m.TTLSeconds) * time.Second)
 		if now.After(expiryTime) {
 			return true
 		}
@@ -242,6 +256,16 @@ func (m *StreamMetadata) ConfigMatches(opts CreateOptions) bool {
 	// Closed status must match
 	if m.Closed != opts.Closed {
 		return false
+	}
+
+	// Fork fields must match
+	if m.ForkedFrom != opts.ForkedFrom {
+		return false
+	}
+	if opts.ForkedFrom != "" {
+		if opts.ForkOffset != nil && !m.ForkOffset.Equal(*opts.ForkOffset) {
+			return false
+		}
 	}
 
 	return true

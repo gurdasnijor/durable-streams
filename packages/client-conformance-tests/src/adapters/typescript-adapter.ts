@@ -197,14 +197,9 @@ async function handleCommand(command: TestCommand): Promise<TestResult> {
         const url = `${serverUrl}${command.path}`
         const contentType = command.contentType ?? `application/octet-stream`
 
-        // Check if stream already exists by trying to connect first
-        let alreadyExists = false
-        try {
-          await DurableStream.head({ url })
-          alreadyExists = true
-        } catch {
-          // Stream doesn't exist, which is expected for new creates
-        }
+        // Check if stream already exists by trying HEAD first
+        const existsCheck = await DurableStream.head({ url })
+        const alreadyExists = existsCheck.exists
 
         const ds = await DurableStream.create({
           url,
@@ -225,7 +220,7 @@ async function handleCommand(command: TestCommand): Promise<TestResult> {
           type: `create`,
           success: true,
           status: alreadyExists ? 200 : 201, // 201 for new, 200 for idempotent
-          offset: head.offset,
+          offset: head.exists ? head.offset : undefined,
         }
       } catch (err) {
         return errorResult(`create`, err)
@@ -241,6 +236,17 @@ async function handleCommand(command: TestCommand): Promise<TestResult> {
         })
 
         const head = await ds.head()
+
+        if (!head.exists) {
+          return {
+            type: `error`,
+            success: false,
+            commandType: `connect`,
+            status: 404,
+            errorCode: ErrorCodes.NOT_FOUND,
+            message: `Stream not found: ${command.path}`,
+          }
+        }
 
         // Cache the content-type for this stream
         if (head.contentType) {
@@ -297,7 +303,7 @@ async function handleCommand(command: TestCommand): Promise<TestResult> {
           type: `append`,
           success: true,
           status: 200,
-          offset: head.offset,
+          offset: head.exists ? head.offset : undefined,
           headersSent:
             Object.keys(headersSent).length > 0 ? headersSent : undefined,
           paramsSent:
@@ -421,8 +427,83 @@ async function handleCommand(command: TestCommand): Promise<TestResult> {
           finalOffset = response.offset
           upToDate = response.upToDate
           streamClosed = response.streamClosed
+        } else if (isJson) {
+          const startTime = Date.now()
+          let chunkCount = 0
+          let done = false
+
+          await new Promise<void>((resolve, reject) => {
+            const subscriptionTimeoutId = setTimeout(() => {
+              done = true
+              abortController.abort()
+              upToDate = response.upToDate || true
+              finalOffset = response.offset
+              streamClosed = response.streamClosed
+              resolve()
+            }, timeoutMs)
+
+            const unsubscribe = response.subscribeJson(async (batch) => {
+              if (done || chunkCount >= maxChunks) {
+                return
+              }
+
+              if (Date.now() - startTime > timeoutMs) {
+                done = true
+                resolve()
+                return
+              }
+
+              if (batch.items.length > 0) {
+                chunks.push({
+                  data: JSON.stringify(batch.items),
+                  offset: batch.offset,
+                })
+                chunkCount++
+              }
+
+              finalOffset = batch.offset
+              upToDate = batch.upToDate
+              streamClosed = batch.streamClosed
+
+              if (command.waitForUpToDate && batch.upToDate) {
+                done = true
+                clearTimeout(subscriptionTimeoutId)
+                resolve()
+                return
+              }
+
+              if (chunkCount >= maxChunks) {
+                done = true
+                clearTimeout(subscriptionTimeoutId)
+                resolve()
+              }
+
+              await Promise.resolve()
+            })
+
+            response.closed
+              .then(() => {
+                if (!done) {
+                  done = true
+                  clearTimeout(subscriptionTimeoutId)
+                  upToDate = response.upToDate
+                  finalOffset = response.offset
+                  streamClosed = response.streamClosed
+                  resolve()
+                }
+              })
+              .catch((err) => {
+                if (!done) {
+                  done = true
+                  clearTimeout(subscriptionTimeoutId)
+                  reject(err)
+                }
+              })
+
+            void unsubscribe
+          })
         } else {
-          // For live mode, use subscribeBytes which provides per-chunk metadata
+          // For live non-JSON mode, use subscribeBytes which provides per-chunk metadata
           const decoder = new TextDecoder()
           const startTime = Date.now()
           let chunkCount = 0
@@ -545,6 +626,17 @@ async function handleCommand(command: TestCommand): Promise<TestResult> {
           url,
           headers: command.headers,
         })
+
+        if (!result.exists) {
+          return {
+            type: `error`,
+            success: false,
+            commandType: `head`,
+            status: 404,
+            errorCode: ErrorCodes.NOT_FOUND,
+            message: `Stream not found: ${command.path}`,
+          }
+        }
 
         // Cache content-type
         if (result.contentType) {

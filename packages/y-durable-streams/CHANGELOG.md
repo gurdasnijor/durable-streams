@@ -1,5 +1,55 @@
 # @durable-streams/y-durable-streams
 
+## 0.2.6
+
+### Patch Changes
+
+- Updated dependencies [[`6afab5f`](https://github.com/durable-streams/durable-streams/commit/6afab5f8258999ff1794749ad9d0d9bd0c823625)]:
+  - @durable-streams/client@0.2.5
+
+## 0.2.5
+
+### Patch Changes
+
+- Retain awareness subscription unsubscribe callback and clean it up on disconnect, matching the document updates subscription lifecycle ([#341](https://github.com/durable-streams/durable-streams/pull/341))
+
+- docs(yjs): inline example snippets, remove broken examples/ refs ([#337](https://github.com/durable-streams/durable-streams/pull/337))
+  - `yjs-editors`: add an inlined "Sharing doc/awareness via Context" section
+    showing the full `YjsRoomProvider` pattern (provider with `connect: false`,
+    listeners before connect, `status` + `synced` + `error` events, Strict
+    Mode-safe awareness re-seeding via ref, merge-not-overwrite `setUsername`).
+    Previously this pattern pointed at `examples/yjs-demo/...` which doesn't
+    ship in the npm package.
+  - `yjs-server`: add an inlined "Single-origin dev server" section showing
+    how to spawn Caddy alongside `YjsServer` and the matching dev Caddyfile
+    (DS route, Yjs route with `flush_interval -1`, Vite reverse proxy). Drops
+    prose "Source: examples/yjs-demo/Caddyfile" pointers.
+
+- Updated dependencies [[`a3ed371`](https://github.com/durable-streams/durable-streams/commit/a3ed371a56b28ec6abc00ecdd149e2e030710cf6), [`346bc42`](https://github.com/durable-streams/durable-streams/commit/346bc426f5e13705cdd5e0cc5f7a759c7735a888)]:
+  - @durable-streams/client@0.2.4
+
+## 0.2.4
+
+### Patch Changes
+
+- Fix stale skill and README API docs, add intent CLI bin entry ([#330](https://github.com/durable-streams/durable-streams/pull/330))
+
+- Updated dependencies []:
+  - @durable-streams/client@0.2.3
+
+## 0.2.3
+
+### Patch Changes
+
+- Use consistent lib0 framing for awareness updates, matching document updates. Awareness data is now length-prefixed with lib0's `writeVarUint8Array` on send and decoded with `readVarUint8Array` on receive. ([#290](https://github.com/durable-streams/durable-streams/pull/290))
+
+- Require explicit PUT for document creation, matching the base Durable Streams protocol. Documents and awareness streams are created together on PUT. POST to a non-existent document now returns 404 instead of auto-creating. The YjsProvider issues an idempotent PUT on connect, fixing a bug where read-only clients would poll 404s indefinitely on non-existent documents. ([#295](https://github.com/durable-streams/durable-streams/pull/295))
+
+- Add Yjs document sync over Durable Streams with automatic server-side compaction and presence support. Includes YjsProvider (client) and YjsServer (protocol layer) that handle index, updates, snapshots, and awareness streams transparently. Initial sync fetches snapshot and updates in parallel for faster load times. ([#202](https://github.com/durable-streams/durable-streams/pull/202))
+
+- Updated dependencies [[`5f50195`](https://github.com/durable-streams/durable-streams/commit/5f501950e7f9e3ffcd3c077b4ba90ce405d9f066)]:
+  - @durable-streams/client@0.2.3
+
 ## 0.2.2
 
 ### Patch Changes

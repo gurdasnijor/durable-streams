@@ -2,6 +2,7 @@
 title: StreamDB
 description: >-
   Type-safe reactive database in a durable stream. Define schemas with StandardSchema, query with TanStack DB, and use optimistic actions on top of Durable State.
+outline: [2, 3]
 ---
 
 # StreamDB
@@ -9,6 +10,8 @@ description: >-
 StreamDB is a type-safe reactive database in a durable stream.
 
 Pass in a [StandardSchema](#define-a-standardschema) and get typed collections, reactive queries, and optimistic actions on top of [Durable State](durable-state.md).
+
+<IntentLink intent="create" serviceType="streams" serviceVariant="state" />
 
 ## Installation
 
@@ -75,13 +78,14 @@ const db = createStreamDB({
     url: "https://api.example.com/streams/my-stream",
     contentType: "application/json",
   },
+  live: "sse", // optional: true, "long-poll", "sse", or false
   state: schema,
 })
 
 await db.preload()
 ```
 
-Calling `preload()` reads the stream from the beginning, materializes the current state, and then stays connected for live updates.
+Calling `preload()` reads the stream from the beginning, materializes the current state, and then stays connected for live updates. By default StreamDB passes `live: true`; pass `live: "sse"` or `live: "long-poll"` to force a transport.
 
 ## Reactive queries
 
@@ -146,7 +150,9 @@ const db = createStreamDB({
       mutationFn: async (user) => {
         const txid = crypto.randomUUID()
         await stream.append(
-          schema.users.insert({ value: user, headers: { txid } })
+          JSON.stringify(
+            schema.users.insert({ value: user, headers: { txid } })
+          )
         )
         await db.utils.awaitTxId(txid)
       },
@@ -173,7 +179,9 @@ const schema = createStateSchema({
 })
 
 await stream.append(
-  schema.config.insert({ value: { key: "theme", value: "dark" } })
+  JSON.stringify(
+    schema.config.insert({ value: { key: "theme", value: "dark" } })
+  )
 )
 ```
 
@@ -189,9 +197,11 @@ const schema = createStateSchema({
 })
 
 await stream.append(
-  schema.presence.update({
-    value: { userId: "alice", status: "online", lastSeen: Date.now() },
-  })
+  JSON.stringify(
+    schema.presence.update({
+      value: { userId: "alice", status: "online", lastSeen: Date.now() },
+    })
+  )
 )
 ```
 
@@ -205,9 +215,11 @@ const schema = createStateSchema({
   typing: { schema: typingSchema, type: "typing", primaryKey: "userId" },
 })
 
-await stream.append(schema.users.insert({ value: user }))
-await stream.append(schema.messages.insert({ value: message }))
-await stream.append(schema.reactions.insert({ value: reaction }))
+await stream.append(JSON.stringify(schema.users.insert({ value: user })))
+await stream.append(JSON.stringify(schema.messages.insert({ value: message })))
+await stream.append(
+  JSON.stringify(schema.reactions.insert({ value: reaction }))
+)
 ```
 
 ## Best practices
@@ -235,7 +247,9 @@ useEffect(() => {
 
 ```typescript
 const txid = crypto.randomUUID()
-await stream.append(schema.users.insert({ value: user, headers: { txid } }))
+await stream.append(
+  JSON.stringify(schema.users.insert({ value: user, headers: { txid } }))
+)
 await db.utils.awaitTxId(txid, 10000)
 ```
 

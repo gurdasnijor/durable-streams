@@ -1,5 +1,62 @@
 # @durable-streams/state
 
+## 0.2.8
+
+### Patch Changes
+
+- Updated dependencies [[`6afab5f`](https://github.com/durable-streams/durable-streams/commit/6afab5f8258999ff1794749ad9d0d9bd0c823625)]:
+  - @durable-streams/client@0.2.5
+
+## 0.2.7
+
+### Patch Changes
+
+- feat(state): expose StreamDB offsets and subscription hooks ([#365](https://github.com/durable-streams/durable-streams/pull/365))
+
+  StreamDB can now reuse an existing DurableStream instance, expose the latest
+  consumed offset, and notify callers around JSON stream batches. Collection IDs
+  are scoped by stream URL to avoid cross-stream collisions, and live replayed
+  inserts are normalized to updates when they match existing rows.
+
+- Updated dependencies []:
+  - @durable-streams/client@0.2.4
+
+## 0.2.6
+
+### Patch Changes
+
+- Add first-class live mode configuration to `createStreamDB()` so callers can force `"sse"` or `"long-poll"`, and add `headers` to `IdempotentProducerOptions` for producer batch and close requests. ([#353](https://github.com/durable-streams/durable-streams/pull/353))
+
+- Updated dependencies [[`a3ed371`](https://github.com/durable-streams/durable-streams/commit/a3ed371a56b28ec6abc00ecdd149e2e030710cf6), [`346bc42`](https://github.com/durable-streams/durable-streams/commit/346bc426f5e13705cdd5e0cc5f7a759c7735a888)]:
+  - @durable-streams/client@0.2.4
+
+## 0.2.5
+
+### Patch Changes
+
+- docs(stream-db): show list query pattern for useLiveQuery ([#333](https://github.com/durable-streams/durable-streams/pull/333))
+
+  Added list query example with `{ data }` destructuring and default empty array alongside the existing findOne pattern. Prevents agents from writing `allSessions.map(...)` instead of `const { data: allSessions = [] } = useLiveQuery(...)`.
+
+- Updated dependencies []:
+  - @durable-streams/client@0.2.3
+
+## 0.2.4
+
+### Patch Changes
+
+- Remove verbose debug logging from StreamDB stream consumer ([#328](https://github.com/durable-streams/durable-streams/pull/328))
+
+- Updated dependencies []:
+  - @durable-streams/client@0.2.3
+
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [[`5f50195`](https://github.com/durable-streams/durable-streams/commit/5f501950e7f9e3ffcd3c077b4ba90ce405d9f066)]:
+  - @durable-streams/client@0.2.3
+
 ## 0.2.2
 
 ### Patch Changes

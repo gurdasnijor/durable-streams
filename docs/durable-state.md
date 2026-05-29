@@ -2,11 +2,14 @@
 title: Durable State
 description: >-
   Structured state changes on top of Durable Streams. Work with typed insert, update, and delete events using MaterializedState, StreamDB, and Durable Sessions.
+outline: [2, 3]
 ---
 
 # Durable State
 
 Durable State adds structured state changes on top of Durable Streams. Instead of treating a stream as raw bytes, you work with typed `insert`, `update`, and `delete` events.
+
+<IntentLink intent="create" serviceType="streams" serviceVariant="state" />
 
 ## Protocol overview
 
@@ -134,6 +137,7 @@ For a detailed walkthrough, see the [Durable Sessions for Collaborative AI](http
 
 - [State protocol specification](https://github.com/durable-streams/durable-streams/blob/main/packages/state/STATE-PROTOCOL.md) -- full protocol spec
 - [StreamDB](stream-db.md) -- reactive collections, queries, and optimistic actions
+- [Yjs](yjs.md) -- sync Yjs CRDTs for collaborative editing
 - [Package README](https://github.com/durable-streams/durable-streams/blob/main/packages/state/README.md) -- complete API reference
 - [Examples](https://github.com/durable-streams/durable-streams/tree/main/examples/state) -- background jobs dashboard and Wikipedia live events demo
 - [TanStack DB](https://tanstack.com/db) -- reactive collections and query engine
@@ -141,4 +145,4 @@ For a detailed walkthrough, see the [Durable Sessions for Collaborative AI](http
 
 ---
 
-See also: [Core concepts](concepts.md) | [JSON mode](json-mode.md) | [StreamDB](stream-db.md)
+See also: [Core concepts](concepts.md) | [JSON mode](json-mode.md) | [StreamDB](stream-db.md) | [Yjs](yjs.md)

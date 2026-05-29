@@ -2,6 +2,7 @@
 title: Quickstart
 description: >-
   Get started with Durable Streams by following the Quickstart guide.
+outline: [2, 3]
 ---
 
 # Quickstart
@@ -9,6 +10,8 @@ description: >-
 Durable Streams are the data primitive for the agent loop.
 
 Persistent, addressable, real‑time streams for building resilient agent sessions and collaborative multi-user, multi-agent systems.
+
+<IntentLink intent="create" serviceType="streams" />
 
 ## Get started
 
@@ -73,5 +76,6 @@ Including, working with structured data and integrating into AI SDKs:
 
 - [JSON mode](/json-mode) -- stream structured data using JSON messages
 - [StreamDB](/stream-db) -- type-safe, reactive database in a stream
+- [Yjs](/yjs) -- sync Yjs CRDTs for collaborative editing
 - [TanStack AI](/tanstack-ai) -- durable session support for TanStack AI apps
 - [Vercel AI SDK](/vercel-ai-sdk) -- durable Transport adapter for AI SDK apps

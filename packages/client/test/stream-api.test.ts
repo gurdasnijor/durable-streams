@@ -101,7 +101,7 @@ describe(`stream() function`, () => {
       })
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `https://example.com/stream?offset=-1&live=long-poll`,
+        `https://example.com/stream?offset=-1`,
         expect.anything()
       )
     })

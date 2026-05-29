@@ -1,5 +1,32 @@
 # @durable-streams/client
 
+## 0.2.5
+
+### Patch Changes
+
+- Restore the TypeScript client surface expected by Durable Streams consumers: ([#369](https://github.com/durable-streams/durable-streams/pull/369))
+  publish the SSE control-event constants from the package entrypoint and expose
+  `IdempotentProducer.lastSuccessfulOffset` after successful writes or closes.
+
+  Republish the server against the fixed client package so `DurableStreamTestServer`
+  can import the SSE constants from `@durable-streams/client`.
+
+## 0.2.4
+
+### Patch Changes
+
+- Implement fetch-then-live pattern: initial requests omit the `live` query parameter so catch-up responses are cacheable by CDNs and browsers. Live mode (long-poll or SSE) activates only after the client reaches up-to-date. ([#354](https://github.com/durable-streams/durable-streams/pull/354))
+
+  For SSE mode, a dedicated `startSSE` path opens a persistent connection only after HTTP catch-up completes, replacing the previous single-connection approach.
+
+- Add first-class live mode configuration to `createStreamDB()` so callers can force `"sse"` or `"long-poll"`, and add `headers` to `IdempotentProducerOptions` for producer batch and close requests. ([#353](https://github.com/durable-streams/durable-streams/pull/353))
+
+## 0.2.3
+
+### Patch Changes
+
+- Fix FetchError.fromResponse() and DurableStreamError.fromResponse() failing on HEAD responses with null body, which caused infinite retries in the backoff wrapper ([#294](https://github.com/durable-streams/durable-streams/pull/294))
+
 ## 0.2.2
 
 ### Patch Changes

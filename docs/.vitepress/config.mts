@@ -75,6 +75,7 @@ export default defineConfig({
             collapsed: false,
           },
           { text: "JSON mode", link: "/json-mode" },
+          { text: "Fork", link: "/fork" },
           { text: "Durable Proxy", link: "/durable-proxy" },
           { text: "Durable State", link: "/durable-state" },
           { text: "StreamDB", link: "/stream-db" },
@@ -86,9 +87,14 @@ export default defineConfig({
         items: [
           { text: "TanStack AI", link: "/tanstack-ai" },
           { text: "Vercel AI SDK", link: "/vercel-ai-sdk" },
+          { text: "Yjs", link: "/yjs" },
           {
             text: "AnyCable",
             link: "https://docs.anycable.io/anycable-go/durable_streams",
+          },
+          {
+            text: "livetrace",
+            link: "https://livetrace.necmttn.com/docs/integrations/durable-streams",
           },
         ],
       },

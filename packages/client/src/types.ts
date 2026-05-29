@@ -515,9 +515,9 @@ export interface ReadOptions {
 }
 
 /**
- * Result from a HEAD request on a stream.
+ * Result from a HEAD request when the stream exists.
  */
-export interface HeadResult {
+export interface HeadResultExists {
   /**
    * Whether the stream exists.
    */
@@ -550,6 +550,18 @@ export interface HeadResult {
    */
   streamClosed: boolean
 }
+
+/**
+ * Result from a HEAD request when the stream does not exist.
+ */
+export interface HeadResultNotFound {
+  exists: false
+}
+
+/**
+ * Result from a HEAD request on a stream.
+ */
+export type HeadResult = HeadResultExists | HeadResultNotFound
 
 /**
  * Metadata extracted from a stream response.
@@ -928,6 +940,15 @@ export interface IdempotentProducerOptions {
    * Custom fetch implementation.
    */
   fetch?: typeof globalThis.fetch
+
+  /**
+   * HTTP headers to include on producer batch and close requests.
+   *
+   * These are merged with headers configured on the DurableStream handle. Producer
+   * headers take precedence over stream headers, except for protocol-controlled
+   * headers such as content-type, Producer-*, and Stream-Closed.
+   */
+  headers?: HeadersRecord
 
   /**
    * AbortSignal for the producer lifecycle.

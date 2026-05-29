@@ -180,7 +180,11 @@ async function createDocument(baseUrl: string, docId: string): Promise<void> {
     method: `PUT`,
   })
 
-  if (response.status !== 201 && response.status !== 409) {
+  if (
+    response.status !== 201 &&
+    response.status !== 200 &&
+    response.status !== 409
+  ) {
     throw new Error(
       `Failed to create document: ${response.status} ${await response.text()}`
     )
@@ -214,7 +218,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         port: 0,
         dsServerUrl: dsServer.url,
         compactionThreshold: 1500, // Threshold for testing (~7 updates)
-        minUpdatesBeforeCompaction: 5, // Min count for testing
       })
       await yjsServer.start()
 
@@ -238,6 +241,7 @@ describe(`Yjs Durable Streams Protocol`, () => {
     describe(`snapshot.discovery-new-doc`, () => {
       it(`should redirect to offset=-1 for new document`, async () => {
         const docId = `discovery-new-${Date.now()}`
+        await createDocument(baseUrl, docId)
 
         const response = await fetch(
           `${baseUrl}/docs/${docId}?offset=snapshot`,
@@ -256,6 +260,7 @@ describe(`Yjs Durable Streams Protocol`, () => {
     describe(`snapshot.discovery-cached`, () => {
       it(`should include Cache-Control header`, async () => {
         const docId = `discovery-cached-${Date.now()}`
+        await createDocument(baseUrl, docId)
 
         const response = await fetch(
           `${baseUrl}/docs/${docId}?offset=snapshot`,
@@ -268,6 +273,24 @@ describe(`Yjs Durable Streams Protocol`, () => {
         expect(response.status).toBe(307)
         const cacheControl = response.headers.get(`cache-control`)
         expect(cacheControl).toBe(`private, max-age=5`)
+      })
+    })
+
+    describe(`snapshot.discovery-requires-put`, () => {
+      it(`should return 404 for non-existent document`, async () => {
+        const docId = `discovery-no-put-${Date.now()}`
+
+        const response = await fetch(
+          `${baseUrl}/docs/${docId}?offset=snapshot`,
+          {
+            method: `GET`,
+            redirect: `manual`,
+          }
+        )
+
+        expect(response.status).toBe(404)
+        const body = await response.json()
+        expect(body.error.code).toBe(`DOCUMENT_NOT_FOUND`)
       })
     })
 
@@ -305,15 +328,9 @@ describe(`Yjs Durable Streams Protocol`, () => {
         doc?: Y.Doc
         awareness?: Awareness
         connect?: boolean
-        skipDocCreation?: boolean
       }
     ): Promise<YjsProvider> {
       const doc = options?.doc ?? new Y.Doc()
-
-      // Create the document on the server first (unless skipped)
-      if (!options?.skipDocCreation) {
-        await createDocument(baseUrl, docId)
-      }
 
       const provider = new YjsProvider({
         doc,
@@ -327,8 +344,8 @@ describe(`Yjs Durable Streams Protocol`, () => {
       return provider
     }
 
-    describe(`write.creates-document`, () => {
-      it(`should create document on first write`, async () => {
+    describe(`write.requires-put`, () => {
+      it(`should sync document after PUT`, async () => {
         const docId = `create-on-write-${Date.now()}`
         const doc = new Y.Doc()
         const provider = await createProviderWithDoc(docId, { doc })
@@ -345,35 +362,16 @@ describe(`Yjs Durable Streams Protocol`, () => {
         expect(provider.synced).toBe(true)
       })
 
-      it(`should create document implicitly without PUT`, async () => {
-        const docId = `implicit-create-${Date.now()}`
-        const doc = new Y.Doc()
+      it(`should return 404 on POST without prior PUT`, async () => {
+        const docId = `no-put-post-${Date.now()}`
 
-        // Skip document creation — server should auto-create on first POST
-        const provider = await createProviderWithDoc(docId, {
-          doc,
-          skipDocCreation: true,
+        const response = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `POST`,
+          headers: { "content-type": `application/octet-stream` },
+          body: new Uint8Array([1, 2, 3]),
         })
 
-        await waitForSync(provider)
-
-        const text = doc.getText(`content`)
-        text.insert(0, `Implicitly created`)
-
-        await waitForCondition(() => provider.synced, {
-          label: `provider synced after implicit create write`,
-        })
-        expect(provider.synced).toBe(true)
-
-        // Verify a second provider can read the data
-        const doc2 = new Y.Doc()
-        const provider2 = await createProviderWithDoc(docId, {
-          doc: doc2,
-          skipDocCreation: true,
-        })
-        await waitForSync(provider2)
-
-        await waitForDocText(doc2, `content`, `Implicitly created`)
+        expect(response.status).toBe(404)
       })
     })
 
@@ -397,7 +395,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -416,7 +413,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider1 = await createProviderWithDoc(docId, { doc: doc1 })
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
 
         await waitForSync(provider1)
@@ -455,7 +451,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -473,7 +468,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider1 = await createProviderWithDoc(docId, { doc: doc1 })
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
 
         await waitForSync(provider1)
@@ -543,7 +537,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -589,7 +582,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -629,7 +621,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -655,7 +646,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -680,16 +670,10 @@ describe(`Yjs Durable Streams Protocol`, () => {
       options?: {
         doc?: Y.Doc
         awareness?: Awareness
-        skipDocCreation?: boolean
       }
     ): Promise<YjsProvider> {
       const doc = options?.doc ?? new Y.Doc()
       const awareness = options?.awareness ?? new Awareness(doc)
-
-      // Create the document on the server first (unless skipped)
-      if (!options?.skipDocCreation) {
-        await createDocument(baseUrl, docId)
-      }
 
       const provider = new YjsProvider({
         doc,
@@ -719,7 +703,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
           awareness: awareness2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -759,17 +742,15 @@ describe(`Yjs Durable Streams Protocol`, () => {
       })
     })
 
-    describe(`presence.implicit-creation`, () => {
-      it(`should sync awareness without prior PUT`, async () => {
+    describe(`presence.created-with-doc`, () => {
+      it(`should sync awareness when document created via PUT`, async () => {
         const docId = `awareness-implicit-${Date.now()}`
 
         const doc1 = new Y.Doc()
         const awareness1 = new Awareness(doc1)
-        // Skip document creation — both doc and awareness streams auto-created
         const provider1 = await createProviderWithDoc(docId, {
           doc: doc1,
           awareness: awareness1,
-          skipDocCreation: true,
         })
         await waitForSync(provider1)
 
@@ -778,7 +759,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
           awareness: awareness2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -811,7 +791,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
           awareness: awareness2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -854,7 +833,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
           awareness: awareness2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -888,6 +866,573 @@ describe(`Yjs Durable Streams Protocol`, () => {
     })
   })
 
+  describe(`Awareness Stream Management`, () => {
+    describe(`awareness.put-creates-stream`, () => {
+      it(`should create awareness stream via PUT and POST to it`, async () => {
+        const docId = `aw-put-create-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // PUT to create a custom awareness stream
+        const putResponse = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `PUT` }
+        )
+        expect(putResponse.status).toBe(201)
+        await putResponse.arrayBuffer()
+
+        // POST to the new awareness stream should succeed
+        const postResponse = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([1, 2, 3]),
+          }
+        )
+        expect(postResponse.status).toBe(204)
+      })
+    })
+
+    describe(`awareness.put-idempotent`, () => {
+      it(`should return 201 on first PUT and 200 on subsequent PUT`, async () => {
+        const docId = `aw-put-idempotent-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        const firstPut = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=presence`,
+          { method: `PUT` }
+        )
+        expect(firstPut.status).toBe(201)
+        await firstPut.arrayBuffer()
+
+        const secondPut = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=presence`,
+          { method: `PUT` }
+        )
+        expect(secondPut.status).toBe(200)
+        await secondPut.arrayBuffer()
+      })
+    })
+
+    describe(`awareness.put-requires-document`, () => {
+      it(`should return 404 when PUTting awareness for non-existent document`, async () => {
+        const docId = `aw-put-no-doc-${Date.now()}`
+
+        const response = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=default`,
+          { method: `PUT` }
+        )
+        expect(response.status).toBe(404)
+        const body = await response.json()
+        expect(body.error.code).toBe(`DOCUMENT_NOT_FOUND`)
+      })
+    })
+
+    describe(`awareness.post-auto-creates`, () => {
+      it(`should auto-create awareness stream on POST if it does not exist`, async () => {
+        const docId = `aw-autocreate-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // POST directly without prior PUT — should auto-create and succeed
+        const postResponse = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=ephemeral`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([1, 2, 3]),
+          }
+        )
+        expect(postResponse.status).toBe(204)
+      })
+
+      it(`should recover from TTL expiry by re-creating stream on POST`, async () => {
+        const docId = `aw-ttl-recover-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Create awareness stream via PUT
+        const putResponse = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `PUT` }
+        )
+        expect(putResponse.status).toBe(201)
+        await putResponse.arrayBuffer()
+
+        // POST should work
+        const post1 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([1, 2, 3]),
+          }
+        )
+        expect(post1.status).toBe(204)
+
+        // Simulate TTL expiry by deleting the stream directly at DS level
+        const dsPath = `/v1/stream/yjs/test/docs/${docId}/.awareness/cursors`
+        const deleteResponse = await fetch(`${dsServer!.url}${dsPath}`, {
+          method: `DELETE`,
+        })
+        expect(deleteResponse.ok).toBe(true)
+
+        // POST again — should auto-create and succeed
+        const post2 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([4, 5, 6]),
+          }
+        )
+        expect(post2.status).toBe(204)
+      })
+
+      it(`should handle concurrent POSTs to non-existent stream`, async () => {
+        const docId = `aw-concurrent-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Fire two concurrent POSTs without prior PUT
+        const [res1, res2] = await Promise.all([
+          fetch(`${baseUrl}/docs/${docId}?awareness=concurrent`, {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([1, 2, 3]),
+          }),
+          fetch(`${baseUrl}/docs/${docId}?awareness=concurrent`, {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([4, 5, 6]),
+          }),
+        ])
+
+        // Both should succeed
+        expect(res1.status).toBe(204)
+        expect(res2.status).toBe(204)
+      })
+    })
+
+    describe(`awareness.named-streams-separate`, () => {
+      it(`should keep named awareness streams separate`, async () => {
+        const docId = `aw-multi-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Create two custom awareness streams
+        const put1 = await fetch(`${baseUrl}/docs/${docId}?awareness=cursors`, {
+          method: `PUT`,
+        })
+        expect(put1.status).toBe(201)
+        await put1.arrayBuffer()
+
+        const put2 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=presence`,
+          { method: `PUT` }
+        )
+        expect(put2.status).toBe(201)
+        await put2.arrayBuffer()
+
+        // POST to cursors
+        const postCursors = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([10, 20, 30]),
+          }
+        )
+        expect(postCursors.status).toBe(204)
+
+        // POST to presence
+        const postPresence = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=presence`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([40, 50, 60]),
+          }
+        )
+        expect(postPresence.status).toBe(204)
+
+        // Read cursors stream — should only have its data
+        const cursorsPath = `/v1/stream/yjs/test/docs/${docId}/.awareness/cursors`
+        const cursorsResponse = await fetch(
+          `${dsServer!.url}${cursorsPath}?offset=-1`
+        )
+        expect(cursorsResponse.status).toBe(200)
+        const cursorsData = new Uint8Array(await cursorsResponse.arrayBuffer())
+
+        // Read presence stream — should only have its data
+        const presencePath = `/v1/stream/yjs/test/docs/${docId}/.awareness/presence`
+        const presenceResponse = await fetch(
+          `${dsServer!.url}${presencePath}?offset=-1`
+        )
+        expect(presenceResponse.status).toBe(200)
+        const presenceData = new Uint8Array(
+          await presenceResponse.arrayBuffer()
+        )
+
+        // Verify they contain different data
+        expect(cursorsData).not.toEqual(presenceData)
+      })
+    })
+  })
+
+  describe(`Document Deletion`, () => {
+    describe(`delete.doc-returns-204`, () => {
+      it(`should delete an existing document and return 204`, async () => {
+        const docId = `del-doc-204-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        const response = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(response.status).toBe(204)
+      })
+    })
+
+    describe(`delete.doc-returns-404`, () => {
+      it(`should return 404 when deleting non-existent document`, async () => {
+        const docId = `del-doc-404-${Date.now()}`
+        const response = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(response.status).toBe(404)
+        const body = await response.json()
+        expect(body.error.code).toBe(`DOCUMENT_NOT_FOUND`)
+      })
+    })
+
+    describe(`delete.doc-then-get-returns-404`, () => {
+      it(`should return 404 on GET after document deletion`, async () => {
+        const docId = `del-doc-get-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        const getResponse = await fetch(`${baseUrl}/docs/${docId}?offset=-1`)
+        expect(getResponse.status).toBe(404)
+      })
+    })
+
+    describe(`delete.doc-then-post-returns-404`, () => {
+      it(`should return 404 on POST after document deletion`, async () => {
+        const docId = `del-doc-post-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        const postResponse = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `POST`,
+          headers: { "content-type": `application/octet-stream` },
+          body: new Uint8Array([1, 2, 3]),
+        })
+        expect(postResponse.status).toBe(404)
+      })
+    })
+
+    describe(`delete.doc-then-put-creates-fresh`, () => {
+      it(`should create a fresh document after deletion`, async () => {
+        const docId = `del-doc-recreate-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        const putResponse = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `PUT`,
+        })
+        expect(putResponse.status).toBe(201)
+      })
+    })
+
+    describe(`delete.awareness-returns-204`, () => {
+      it(`should delete an existing awareness stream and return 204`, async () => {
+        const docId = `del-aw-204-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Create a named awareness stream
+        const putRes = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `PUT` }
+        )
+        expect(putRes.status).toBe(201)
+        await putRes.arrayBuffer()
+
+        const deleteRes = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `DELETE` }
+        )
+        expect(deleteRes.status).toBe(204)
+      })
+    })
+
+    describe(`delete.awareness-returns-404`, () => {
+      it(`should return 404 when deleting non-existent awareness stream`, async () => {
+        const docId = `del-aw-404-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        const response = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=nonexistent`,
+          { method: `DELETE` }
+        )
+        expect(response.status).toBe(404)
+        const body = await response.json()
+        expect(body.error.code).toBe(`STREAM_NOT_FOUND`)
+      })
+    })
+
+    describe(`delete.awareness-preserves-document`, () => {
+      it(`should not affect the parent document when deleting awareness`, async () => {
+        const docId = `del-aw-preserve-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Delete default awareness
+        const deleteRes = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=default`,
+          { method: `DELETE` }
+        )
+        expect(deleteRes.status).toBe(204)
+
+        // Document should still be accessible
+        const headRes = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `HEAD`,
+        })
+        expect(headRes.status).toBe(200)
+      })
+    })
+
+    describe(`delete.awareness-post-requires-document`, () => {
+      it(`should return 404 on awareness POST after document deletion`, async () => {
+        const docId = `del-aw-post-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Delete the document
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        // POST to awareness — should NOT auto-create on deleted document
+        const postRes = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=default`,
+          {
+            method: `POST`,
+            headers: { "content-type": `application/octet-stream` },
+            body: new Uint8Array([1, 2, 3]),
+          }
+        )
+        expect(postRes.status).toBe(404)
+        const body = await postRes.json()
+        expect(body.error.code).toBe(`DOCUMENT_NOT_FOUND`)
+      })
+    })
+
+    describe(`delete.doc-then-head-returns-404`, () => {
+      it(`should return 404 on HEAD after document deletion`, async () => {
+        const docId = `del-doc-head-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        const headRes = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `HEAD`,
+        })
+        expect(headRes.status).toBe(404)
+      })
+    })
+
+    describe(`delete.doc-double-delete-returns-404`, () => {
+      it(`should return 404 on second DELETE`, async () => {
+        const docId = `del-doc-double-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        const first = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(first.status).toBe(204)
+
+        const second = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(second.status).toBe(404)
+        const body = await second.json()
+        expect(body.error.code).toBe(`DOCUMENT_NOT_FOUND`)
+      })
+    })
+
+    describe(`delete.doc-then-snapshot-discovery-returns-404`, () => {
+      it(`should return 404 on snapshot discovery after deletion`, async () => {
+        const docId = `del-doc-snap-disc-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        const res = await fetch(`${baseUrl}/docs/${docId}?offset=snapshot`, {
+          redirect: `manual`,
+        })
+        expect(res.status).toBe(404)
+      })
+    })
+
+    describe(`delete.awareness-put-after-doc-delete-returns-404`, () => {
+      it(`should return 404 when creating awareness on deleted document`, async () => {
+        const docId = `del-aw-put-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        await fetch(`${baseUrl}/docs/${docId}`, { method: `DELETE` })
+
+        const putRes = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `PUT` }
+        )
+        expect(putRes.status).toBe(404)
+        const body = await putRes.json()
+        expect(body.error.code).toBe(`DOCUMENT_NOT_FOUND`)
+      })
+    })
+
+    describe(`delete.doc-cascades-awareness`, () => {
+      it(`should delete awareness streams when document is deleted`, async () => {
+        const docId = `del-cascade-aw-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Verify default awareness stream exists
+        const headBefore = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=default`,
+          { method: `HEAD` }
+        )
+        expect(headBefore.status).toBe(200)
+
+        // Delete document
+        const deleteRes = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(deleteRes.status).toBe(204)
+
+        // Awareness operations should return 404
+        const headAfter = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=default`,
+          { method: `HEAD` }
+        )
+        expect(headAfter.status).toBe(404)
+      })
+    })
+
+    describe(`delete.doc-cascades-named-awareness`, () => {
+      it(`should delete named awareness streams when document is deleted`, async () => {
+        const docId = `del-cascade-named-aw-${Date.now()}`
+        await createDocument(baseUrl, docId)
+
+        // Create named awareness streams
+        const put1 = await fetch(`${baseUrl}/docs/${docId}?awareness=cursors`, {
+          method: `PUT`,
+        })
+        expect(put1.status).toBe(201)
+        await put1.arrayBuffer()
+
+        const put2 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=presence`,
+          { method: `PUT` }
+        )
+        expect(put2.status).toBe(201)
+        await put2.arrayBuffer()
+
+        // Verify they exist
+        const head1 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `HEAD` }
+        )
+        expect(head1.status).toBe(200)
+
+        // Delete document
+        const deleteRes = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(deleteRes.status).toBe(204)
+
+        // Named awareness streams should be gone
+        const headAfter1 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=cursors`,
+          { method: `HEAD` }
+        )
+        expect(headAfter1.status).toBe(404)
+
+        const headAfter2 = await fetch(
+          `${baseUrl}/docs/${docId}?awareness=presence`,
+          { method: `HEAD` }
+        )
+        expect(headAfter2.status).toBe(404)
+      })
+    })
+
+    describe(`delete.doc-cascades-snapshots`, () => {
+      let providers: Array<YjsProvider> = []
+
+      afterEach(() => {
+        for (const provider of providers) {
+          provider.destroy()
+        }
+        providers = []
+      })
+
+      async function createProviderWithDoc(
+        docId: string
+      ): Promise<YjsProvider> {
+        const doc = new Y.Doc()
+        const provider = new YjsProvider({
+          doc,
+          baseUrl,
+          docId,
+        })
+        providers.push(provider)
+        return provider
+      }
+
+      it(`should delete snapshot streams when document is deleted`, async () => {
+        const docId = `del-cascade-snap-${Date.now()}`
+        const provider = await createProviderWithDoc(docId)
+        await waitForSync(provider)
+
+        // Write enough data to trigger compaction (threshold is 1500 bytes)
+        const text = provider.doc.getText(`test`)
+        for (let i = 0; i < 10; i++) {
+          text.insert(0, `x`.repeat(200))
+        }
+        await provider.flush()
+
+        // Wait for snapshot to be created
+        await waitForSnapshot(baseUrl, docId)
+
+        // Get snapshot offset from discovery
+        const discoveryRes = await fetch(
+          `${baseUrl}/docs/${docId}?offset=snapshot`,
+          { redirect: `manual` }
+        )
+        expect(discoveryRes.status).toBe(307)
+        const location = discoveryRes.headers.get(`location`)!
+        expect(location).toContain(`_snapshot`)
+
+        // Build full snapshot URL (location may be relative)
+        const snapshotUrl = location.startsWith(`http`)
+          ? location
+          : `${baseUrl}/docs/${docId}?offset=${new URL(location, `http://localhost`).searchParams.get(`offset`)}`
+
+        // Verify snapshot exists
+        const snapshotRes = await fetch(snapshotUrl)
+        expect(snapshotRes.status).toBe(200)
+        await snapshotRes.arrayBuffer()
+
+        provider.destroy()
+        providers = providers.filter((p) => p !== provider)
+
+        // Delete document
+        const deleteRes = await fetch(`${baseUrl}/docs/${docId}`, {
+          method: `DELETE`,
+        })
+        expect(deleteRes.status).toBe(204)
+
+        // Snapshot should be gone — document no longer exists so all offsets return 404
+        const snapshotAfter = await fetch(snapshotUrl)
+        expect(snapshotAfter.status).toBe(404)
+      })
+    })
+  })
+
   describe(`Compaction`, () => {
     let providers: Array<YjsProvider> = []
 
@@ -902,15 +1447,9 @@ describe(`Yjs Durable Streams Protocol`, () => {
       docId: string,
       options?: {
         doc?: Y.Doc
-        skipDocCreation?: boolean
       }
     ): Promise<YjsProvider> {
       const doc = options?.doc ?? new Y.Doc()
-
-      // Create the document on the server first (unless skipped)
-      if (!options?.skipDocCreation) {
-        await createDocument(baseUrl, docId)
-      }
 
       const provider = new YjsProvider({
         doc,
@@ -942,7 +1481,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -975,7 +1513,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -993,7 +1530,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const provider1 = await createProviderWithDoc(docId, { doc: doc1 })
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
 
         await waitForSync(provider1)
@@ -1092,7 +1628,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
           const doc2 = new Y.Doc()
           const provider2 = await createProviderWithDoc(docId, {
             doc: doc2,
-            skipDocCreation: true,
           })
           await waitForSync(provider2)
 
@@ -1168,7 +1703,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
         expect(doc2.getText(`content`).toString()).toBe(`BEFORE`)
@@ -1240,7 +1774,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -1298,7 +1831,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         const doc2 = new Y.Doc()
         const provider2 = await createProviderWithDoc(docId, {
           doc: doc2,
-          skipDocCreation: true,
         })
         await waitForSync(provider2)
 
@@ -1372,9 +1904,6 @@ describe(`Yjs Durable Streams Protocol`, () => {
         await serverA.start()
 
         const baseUrlA = `${serverA.url}/v1/yjs/${service}`
-
-        // Create the document first via PUT
-        await createDocument(baseUrlA, docId)
 
         const doc = new Y.Doc()
         const provider = new YjsProvider({
@@ -1573,8 +2102,8 @@ describe(`Yjs Durable Streams Protocol`, () => {
   })
 
   describe(`Method Validation`, () => {
-    // Document URLs accept: GET, HEAD, POST, PUT
-    const unsupportedDocMethods = [`DELETE`, `PATCH`]
+    // Document URLs accept: GET, HEAD, POST, PUT, DELETE
+    const unsupportedDocMethods = [`PATCH`]
     for (const method of unsupportedDocMethods) {
       it(`should reject ${method} on document URL with 405`, async () => {
         const docId = `method-doc-${method.toLowerCase()}-${Date.now()}`
@@ -1585,8 +2114,8 @@ describe(`Yjs Durable Streams Protocol`, () => {
       })
     }
 
-    // Awareness URLs accept: GET, HEAD, POST
-    const unsupportedAwarenessMethods = [`DELETE`, `PATCH`, `PUT`]
+    // Awareness URLs accept: GET, HEAD, POST, PUT, DELETE
+    const unsupportedAwarenessMethods = [`PATCH`]
     for (const method of unsupportedAwarenessMethods) {
       it(`should reject ${method} on awareness URL with 405`, async () => {
         const docId = `method-aw-${method.toLowerCase()}-${Date.now()}`

@@ -143,8 +143,8 @@ class TestStreamBasicFunctionality:
         called_url = get_request_url(mock_client)
         assert "offset=1_5" in called_url
 
-    def test_stream_sets_live_query_param_for_explicit_modes(self):
-        """Should set live query param for explicit modes."""
+    def test_stream_omits_live_query_param_from_initial_catchup_request(self):
+        """Should omit live query param from the initial catch-up request."""
         mock_response = MockResponse(
             b"data",
             headers={
@@ -162,7 +162,7 @@ class TestStreamBasicFunctionality:
         )
 
         called_url = get_request_url(mock_client)
-        assert "live=long-poll" in called_url
+        assert "live=long-poll" not in called_url
 
     def test_stream_throws_on_missing_offset_header(self):
         """Should fail fast when a successful response omits Stream-Next-Offset."""

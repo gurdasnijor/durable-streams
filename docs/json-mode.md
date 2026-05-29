@@ -2,6 +2,7 @@
 title: JSON mode
 description: >-
   Stream structured data using JSON messages over a Durable Stream.
+outline: [2, 3]
 ---
 
 # JSON mode
@@ -9,6 +10,8 @@ description: >-
 Stream structured data using JSON messages over a Durable Stream.
 
 JSON mode is enabled by creating the stream with `Content-Type: application/json`. Use it when you want to stream structured messages with preserved message boundaries.
+
+<IntentLink intent="create" serviceType="streams" serviceVariant="json" />
 
 ## What JSON mode does
 
@@ -70,7 +73,7 @@ const events = await DurableStream.create({
   contentType: "application/json",
 })
 
-await events.append({ type: "user.created", id: "123" })
+await events.append(JSON.stringify({ type: "user.created", id: "123" }))
 
 const res = await stream<{ type: string; id: string }>({
   url: "http://localhost:4437/v1/stream/events",
@@ -108,3 +111,4 @@ with stream("http://localhost:4437/v1/stream/events") as res:
 - [Core concepts](/concepts.md#messages-and-content-types)
 - [Durable State](/durable-state.md) for structured state sync on top of JSON mode
 - [StreamDB](stream-db.md) for a type-safe reactive database in a stream, running on Durable State
+- [Yjs](yjs.md) for syncing Yjs CRDTs over durable streams

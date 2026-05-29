@@ -2,11 +2,14 @@
 title: CLI
 description: >-
   Command-line tool for creating, writing to, reading from, and managing Durable Streams. Supports piped input, JSON mode, batch writes, and token authentication.
+outline: [2, 3]
 ---
 
 # CLI
 
 The Durable Streams CLI is a command-line tool for creating, writing to, reading from, and managing streams. It connects to any Durable Streams server over HTTP.
+
+<IntentLink intent="create" serviceType="streams" />
 
 ## Installation
 
@@ -61,6 +64,9 @@ durable-stream create <stream_id> [options]
 ```bash
 # Create a plain stream
 durable-stream create my-stream
+
+# Create a hierarchical stream ID
+durable-stream create account-123/chat/room-1
 
 # Create a JSON stream
 durable-stream create events --json

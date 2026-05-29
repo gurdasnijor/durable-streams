@@ -13,6 +13,7 @@ import {
   encodeStreamPath,
 } from "@durable-streams/server"
 import { decode, encode } from "./support/test-helpers"
+import type { FileBackedStreamStore } from "@durable-streams/server"
 
 // ============================================================================
 // Test fixture for file-backed server
@@ -83,9 +84,10 @@ describe(`Server Close`, () => {
     const testServer = new DurableStreamTestServer({ dataDir, port: 0 })
     await testServer.start()
 
-    // Mock store.close() to reject
-    const originalClose = testServer.store.close
-    testServer.store.close = () =>
+    // Mock store.close() to reject (test runs with dataDir → FileBackedStreamStore)
+    const fileStore = testServer.store as FileBackedStreamStore
+    const originalClose = fileStore.close
+    fileStore.close = () =>
       Promise.reject(new Error(`Close failed intentionally`))
 
     // Should reject with the error (not hang)
@@ -98,7 +100,7 @@ describe(`Server Close`, () => {
     }
 
     // Restore and cleanup - server might be partially stopped
-    testServer.store.close = originalClose
+    fileStore.close = originalClose
     try {
       await testServer.stop()
     } catch {
@@ -140,8 +142,8 @@ describe(`Recovery and Crash Consistency`, () => {
 
     const reconciledMeta = (server2.store as any).db.get(key)
     expect(reconciledMeta.currentOffset).toBe(
-      `0000000000000000_0000000000000004`
-    ) // Actual file offset for "msg1"
+      `0000000000000000_0000000000000009`
+    )
 
     // Should be able to append more
     await server2.store.append(`/test`, encode(`msg2`))
@@ -175,8 +177,7 @@ describe(`Recovery and Crash Consistency`, () => {
     const segmentPath = path.join(
       dataDir,
       `streams`,
-      streamMeta.directoryName,
-      `segment_00000.log`
+      `${streamMeta.directoryName}.log`
     )
     const content = fs.readFileSync(segmentPath)
     // Truncate last 3 bytes (partial message)
@@ -190,7 +191,7 @@ describe(`Recovery and Crash Consistency`, () => {
     // Should only have 1 complete message (complete1)
     // complete2 was truncated so should be discarded
     expect(messages).toHaveLength(1)
-    expect(decode(messages[0].data)).toBe(`complete1`)
+    expect(decode(messages[0]!.data)).toBe(`complete1`)
 
     await server2.stop()
   })
@@ -210,18 +211,65 @@ describe(`Recovery and Crash Consistency`, () => {
     await new Promise((resolve) => setTimeout(resolve, 1100))
 
     const streamMeta = (server1.store as any).db.get(`stream:/test`)
-    const streamDir = path.join(dataDir, `streams`, streamMeta.directoryName)
+    const segmentPath = path.join(
+      dataDir,
+      `streams`,
+      `${streamMeta.directoryName}.log`
+    )
 
     await server1.stop()
 
-    // Delete the stream directory (but leave LMDB entry)
-    fs.rmSync(streamDir, { recursive: true })
+    // Delete the stream file (but leave LMDB entry)
+    fs.rmSync(segmentPath)
 
     // Restart - should detect missing file and remove from LMDB
     const server2 = new DurableStreamTestServer({ dataDir, port: 0 })
     await server2.start()
 
     expect(server2.store.has(`/test`)).toBe(false)
+
+    await server2.stop()
+  })
+
+  test(`should not accept frame with missing trailing newline`, async () => {
+    // Verify that scanFileForTrueOffset rejects a frame where only the
+    // trailing newline byte was lost (e.g. crash mid-write).
+    await server.stop()
+
+    const server1 = new DurableStreamTestServer({ dataDir, port: 0 })
+    await server1.start()
+
+    server1.store.create(`/test`, { contentType: `text/plain` })
+    await server1.store.append(`/test`, encode(`msg1`))
+
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+
+    const streamMeta = (server1.store as any).db.get(`stream:/test`)
+    await server1.stop()
+
+    // Truncate just the trailing newline of the only frame
+    const segmentPath = path.join(
+      dataDir,
+      `streams`,
+      `${streamMeta.directoryName}.log`
+    )
+    const content = fs.readFileSync(segmentPath)
+    // Frame: [4-byte len][4 bytes "msg1"][\n] = 9 bytes. Remove last byte.
+    fs.writeFileSync(segmentPath, content.subarray(0, content.length - 1))
+
+    // Restart — recovery should treat the truncated frame as incomplete
+    const server2 = new DurableStreamTestServer({ dataDir, port: 0 })
+    await server2.start()
+
+    const reconciledMeta = (server2.store as any).db.get(`stream:/test`)
+    // The only frame is incomplete, so offset should be 0 (no complete frames)
+    expect(reconciledMeta.currentOffset).toBe(
+      `0000000000000000_0000000000000000`
+    )
+
+    // read() should return no messages
+    const { messages } = server2.store.read(`/test`)
+    expect(messages).toHaveLength(0)
 
     await server2.stop()
   })
@@ -271,8 +319,57 @@ describe(`Recovery and Crash Consistency`, () => {
     expect(server2.store.has(`/persist`)).toBe(true)
     const { messages } = server2.store.read(`/persist`)
     expect(messages).toHaveLength(1)
-    expect(decode(messages[0].data)).toBe(`persisted message`)
+    expect(decode(messages[0]!.data)).toBe(`persisted message`)
 
     await server2.stop()
+  })
+})
+
+// ============================================================================
+// Concurrent Append Tests
+// ============================================================================
+
+describe(`Concurrent appends`, () => {
+  test(`currentOffset stays in sync with file under concurrent appends to the same stream`, async () => {
+    // Regression test: without per-stream serialization in append(), two
+    // concurrent appends can both read the same starting currentOffset,
+    // both compute their newOffset, both write a frame to the file, but
+    // only one's LMDB update wins — leaving currentOffset lagging the
+    // file's actual byte position. The next append/read then sees an
+    // offset that the LMDB-tracked tail doesn't acknowledge, which on the
+    // server side surfaces as INVALID_OFFSET ack rejections.
+    server.store.create(`/concurrent`, { contentType: `text/plain` })
+
+    const N = 50
+    const payload = encode(`x`.repeat(64))
+    const results = await Promise.all(
+      Array.from({ length: N }, () =>
+        server.store.append(`/concurrent`, payload)
+      )
+    )
+
+    // Every append must have produced a message with a unique offset.
+    const offsets = results
+      .map((result: unknown) => {
+        if (!result || typeof result !== `object` || !(`offset` in result)) {
+          return null
+        }
+        return typeof result.offset === `string` ? result.offset : null
+      })
+      .filter((offset: string | null): offset is string => offset !== null)
+    expect(offsets).toHaveLength(N)
+    expect(new Set(offsets).size).toBe(N)
+
+    // The file must contain N messages — read() walks the file directly.
+    const { messages } = server.store.read(`/concurrent`)
+    expect(messages).toHaveLength(N)
+
+    // The LMDB-tracked currentOffset must equal the offset of the last
+    // frame in the file. Otherwise the server's stream-next-offset header
+    // (and getTailOffset) would lag the actual stream contents and reject
+    // valid acks.
+    const meta = (server.store as any).db.get(`stream:/concurrent`)
+    const lastMessageOffset = messages[messages.length - 1]!.offset
+    expect(meta.currentOffset).toBe(lastMessageOffset)
   })
 })
