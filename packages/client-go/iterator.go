@@ -214,8 +214,9 @@ func (it *ChunkIterator) nextHTTP() (*Chunk, error) {
 		it.UpToDate = upToDate
 		it.StreamClosed = streamClosed
 
-		// If up to date and not in live mode, mark as done for next call
-		if upToDate && it.live == LiveModeNone {
+		// If the stream is closed, or we're up to date in non-live mode,
+		// mark as done for the next call.
+		if streamClosed || (upToDate && it.live == LiveModeNone) {
 			it.doneOnce = true
 		}
 		it.mu.Unlock()
@@ -254,11 +255,22 @@ func (it *ChunkIterator) nextHTTP() (*Chunk, error) {
 		it.UpToDate = upToDate
 		it.StreamClosed = streamClosed
 
-		// In non-live mode, 204 means we're done
-		if it.live == LiveModeNone {
+		// In non-live mode, 204 means we're done. A closed stream is done in
+		// all modes.
+		if it.live == LiveModeNone || streamClosed {
 			it.doneOnce = true
 			it.mu.Unlock()
-			return nil, Done
+			if it.live == LiveModeNone {
+				return nil, Done
+			}
+			return &Chunk{
+				NextOffset:   nextOffset,
+				Data:         nil,
+				UpToDate:     upToDate,
+				StreamClosed: streamClosed,
+				Cursor:       cursor,
+				StatusCode:   http.StatusNoContent,
+			}, nil
 		}
 		it.mu.Unlock()
 
@@ -449,6 +461,10 @@ func (it *ChunkIterator) establishSSEConnection() error {
 			resp.Body.Close()
 			return newStreamError("read", it.stream.url, resp.StatusCode,
 				ErrContentTypeMismatch)
+		}
+		if err := it.validateResponseHeaders(resp, LiveModeSSE); err != nil {
+			resp.Body.Close()
+			return err
 		}
 
 		it.mu.Lock()
