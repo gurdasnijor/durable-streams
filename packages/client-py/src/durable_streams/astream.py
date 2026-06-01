@@ -39,6 +39,18 @@ from durable_streams._util import (
     resolve_params_async,
 )
 
+ON_ERROR_MAX_RETRIES = 50
+
+
+async def _sleep_before_retry(retry_count: int) -> None:
+    """Small bounded backoff with jitter for on_error retries."""
+    import random
+
+    import anyio
+
+    delay = min(0.001 * (2 ** min(retry_count, 6)), 0.05)
+    await anyio.sleep(delay + random.uniform(0, delay))
+
 
 class AsyncStreamSession:
     """
@@ -293,6 +305,7 @@ async def _astream_internal(
     param_mutations: dict[str, str] = {}
 
     # Make the initial request with retry loop for on_error
+    retry_count = 0
     while True:
         # Re-resolve headers/params on each retry so callables (e.g., token fetchers)
         # can return fresh values
@@ -358,6 +371,11 @@ async def _astream_internal(
                 if retry_opts is None:
                     raise
 
+                if retry_count >= ON_ERROR_MAX_RETRIES:
+                    raise
+                retry_count += 1
+                await _sleep_before_retry(retry_count)
+
                 # Accumulate mutations for retry and for fetch_next
                 if "params" in retry_opts:
                     param_mutations = {**param_mutations, **retry_opts["params"]}
@@ -417,6 +435,7 @@ async def _astream_internal(
         next_url = build_url_with_params(url, all_prms)
 
         # Retry loop with on_error for follow-up requests
+        retry_count = 0
         while True:
             try:
                 # Use streaming mode for live fetches
@@ -458,12 +477,19 @@ async def _astream_internal(
                     else:
                         retry_opts = result
                     if retry_opts is not None:
+                        if retry_count >= ON_ERROR_MAX_RETRIES:
+                            raise
+                        retry_count += 1
+                        await _sleep_before_retry(retry_count)
+
                         # Apply retry mutations
                         if "params" in retry_opts:
+                            captured_param_mutations.update(retry_opts["params"])
                             final_prms = {**final_prms, **retry_opts["params"]}
                             all_prms = {**final_prms, **next_params}
                             next_url = build_url_with_params(url, all_prms)
                         if "headers" in retry_opts:
+                            captured_header_mutations.update(retry_opts["headers"])
                             final_hdrs = {**final_hdrs, **retry_opts["headers"]}
                         continue
                 raise
@@ -502,6 +528,12 @@ async def _astream_internal(
             body = body_bytes.decode("utf-8", errors="replace")
             hdrs = parse_httpx_headers(resp.headers)
             raise error_from_status(resp.status_code, url, body=body, headers=hdrs)
+        try:
+            hdrs = parse_httpx_headers(resp.headers)
+            validate_response_headers(hdrs, sse_url)
+        except Exception:
+            await resp.aclose()
+            raise
         return resp
 
     return AsyncStreamResponse(
