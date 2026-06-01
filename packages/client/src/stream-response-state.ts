@@ -186,22 +186,7 @@ export abstract class ActiveState extends StreamState {
 
 // --- Abstract: FetchingState ---
 
-export abstract class FetchingState extends ActiveState {
-  shouldUseSse(): boolean {
-    return false
-  }
-
-  handleResponseMetadata(input: ResponseMetadataInput): ResponseTransition {
-    const shared: SharedStateFields = {
-      offset: input.offset ?? this.offset,
-      cursor: input.cursor ?? this.cursor,
-      upToDate: input.upToDate,
-      streamClosed: this.streamClosed || input.streamClosed,
-    }
-    const syncing = new SyncingState(shared)
-    return { action: `accepted`, state: syncing }
-  }
-}
+export abstract class FetchingState extends ActiveState {}
 
 // --- InitialState ---
 
@@ -355,63 +340,33 @@ export class LiveState extends ActiveState {
       maxShortConnections,
     } = input
 
+    const shared: SharedStateFields = {
+      offset: this.offset,
+      cursor: this.cursor,
+      upToDate: this.upToDate,
+      streamClosed: this.streamClosed,
+    }
+
     if (connectionDuration < minConnectionDuration && !wasAborted) {
       const newCount = this.#consecutiveShortConnections + 1
+      const fellBackToLongPolling = newCount >= maxShortConnections
 
-      if (newCount >= maxShortConnections) {
-        const live = new LiveState(
-          {
-            offset: this.offset,
-            cursor: this.cursor,
-            upToDate: this.upToDate,
-            streamClosed: this.streamClosed,
-          },
-          {
-            consecutiveShortConnections: newCount,
-            sseFallbackToLongPolling: true,
-          }
-        )
-        return {
-          state: live,
-          fellBackToLongPolling: true,
-          wasShortConnection: true,
-        }
-      }
-
-      const live = new LiveState(
-        {
-          offset: this.offset,
-          cursor: this.cursor,
-          upToDate: this.upToDate,
-          streamClosed: this.streamClosed,
-        },
-        {
-          consecutiveShortConnections: newCount,
-          sseFallbackToLongPolling: false,
-        }
-      )
       return {
-        state: live,
-        fellBackToLongPolling: false,
+        state: new LiveState(shared, {
+          consecutiveShortConnections: newCount,
+          sseFallbackToLongPolling: fellBackToLongPolling,
+        }),
+        fellBackToLongPolling,
         wasShortConnection: true,
       }
     }
 
     if (connectionDuration >= minConnectionDuration) {
-      const live = new LiveState(
-        {
-          offset: this.offset,
-          cursor: this.cursor,
-          upToDate: this.upToDate,
-          streamClosed: this.streamClosed,
-        },
-        {
+      return {
+        state: new LiveState(shared, {
           consecutiveShortConnections: 0,
           sseFallbackToLongPolling: this.#sseFallbackToLongPolling,
-        }
-      )
-      return {
-        state: live,
+        }),
         fellBackToLongPolling: false,
         wasShortConnection: false,
       }

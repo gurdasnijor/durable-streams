@@ -662,8 +662,8 @@ export class StreamResponseImpl<
     // If upToDate is signaled, yield an empty response so subscribers receive the signal
     // This is important for empty streams and for subscribers waiting for catch-up completion
     if (event.upToDate) {
-      const response = createSSESyntheticResponse(
-        ``,
+      const response = createSSESyntheticResponseFromParts(
+        [``],
         event.streamNextOffset,
         event.streamCursor,
         true,
@@ -1095,25 +1095,21 @@ export class StreamResponseImpl<
             this.#markClosed()
             controller.close()
           } else {
+            const errorObj = toError(err)
+
             // Recoverable error — try onError handler
             if (this.#onError) {
-              const errorObj =
-                err instanceof Error ? err : new Error(String(err))
               if (this.#syncState instanceof ActiveState) {
                 this.#syncState = this.#syncState.toErrorState(errorObj)
               }
               if (this.#onErrorRetryAttempt >= ON_ERROR_MAX_RETRIES) {
-                this.#markError(
-                  err instanceof Error ? err : new Error(String(err))
-                )
-                controller.error(err)
+                this.#markError(errorObj)
+                controller.error(errorObj)
                 return
               }
 
               try {
-                const retryOpts = await this.#onError(
-                  err instanceof Error ? err : new Error(String(err))
-                )
+                const retryOpts = await this.#onError(errorObj)
                 if (retryOpts !== undefined) {
                   this.#onErrorRetryAttempt++
 
@@ -1152,8 +1148,8 @@ export class StreamResponseImpl<
             }
 
             // Fatal — propagate error
-            this.#markError(err instanceof Error ? err : new Error(String(err)))
-            controller.error(err)
+            this.#markError(errorObj)
+            controller.error(errorObj)
           }
         }
       },
@@ -1224,25 +1220,8 @@ export class StreamResponseImpl<
       while (!result.done) {
         // Capture upToDate BEFORE parsing (to avoid race with prefetch)
         const wasUpToDate = this.upToDate
-        // Get response text first (handles empty responses gracefully)
         const text = await result.value.text()
-        const content = text.trim() || `[]` // Default to empty array if no content or whitespace
-        let parsed: T | Array<T>
-        try {
-          parsed = JSON.parse(content) as T | Array<T>
-        } catch (err) {
-          const preview =
-            content.length > 100 ? content.slice(0, 100) + `...` : content
-          throw new DurableStreamError(
-            `Failed to parse JSON response: ${err instanceof Error ? err.message : String(err)}. Data: ${preview}`,
-            `PARSE_ERROR`
-          )
-        }
-        if (Array.isArray(parsed)) {
-          items.push(...parsed)
-        } else {
-          items.push(parsed)
-        }
+        items.push(...parseJsonText<T>(text))
         // Check if THIS response had upToDate set when we started reading it
         if (wasUpToDate) break
         result = await reader.read()
@@ -1329,7 +1308,7 @@ export class StreamResponseImpl<
           } catch {
             // Ignore abort errors
           }
-          this.#markError(err instanceof Error ? err : new Error(String(err)))
+          this.#markError(toError(err))
         }
       } finally {
         reader.releaseLock()
@@ -1366,21 +1345,8 @@ export class StreamResponseImpl<
         while (!result.done) {
           const response = result.value
 
-          // Parse JSON and flatten arrays (handle empty responses gracefully)
           const text = await response.text()
-          const content = text.trim() || `[]` // Default to empty array if no content or whitespace
-          let parsed: TJson | Array<TJson>
-          try {
-            parsed = JSON.parse(content) as TJson | Array<TJson>
-          } catch (err) {
-            const preview =
-              content.length > 100 ? content.slice(0, 100) + `...` : content
-            throw new DurableStreamError(
-              `Failed to parse JSON response: ${err instanceof Error ? err.message : String(err)}. Data: ${preview}`,
-              `PARSE_ERROR`
-            )
-          }
-          pendingItems = Array.isArray(parsed) ? parsed : [parsed]
+          pendingItems = parseJsonText<TJson>(text)
 
           if (pendingItems.length > 0) {
             controller.enqueue(pendingItems.shift())
@@ -1454,23 +1420,9 @@ export class StreamResponseImpl<
               this.streamClosed
             )
 
-          // Get response text first (handles empty responses gracefully)
           const text = await response.text()
-          const content = text.trim() || `[]` // Default to empty array if no content or whitespace
-          let parsed: T | Array<T>
-          try {
-            parsed = JSON.parse(content) as T | Array<T>
-          } catch (err) {
-            const preview =
-              content.length > 100 ? content.slice(0, 100) + `...` : content
-            throw new DurableStreamError(
-              `Failed to parse JSON response: ${err instanceof Error ? err.message : String(err)}. Data: ${preview}`,
-              `PARSE_ERROR`
-            )
-          }
-          const items = Array.isArray(parsed) ? parsed : [parsed]
+          const items = parseJsonText<T>(text)
 
-          // Await callback (handles both sync and async)
           await subscriber({
             items,
             offset,
@@ -1487,7 +1439,7 @@ export class StreamResponseImpl<
         const isAborted = abortController.signal.aborted
         const isBodyError = e instanceof TypeError && String(e).includes(`Body`)
         if (!isAborted && !isBodyError) {
-          this.#markError(e instanceof Error ? e : new Error(String(e)))
+          this.#markError(toError(e))
         } else {
           this.#markClosed()
         }
@@ -1546,7 +1498,7 @@ export class StreamResponseImpl<
         const isAborted = abortController.signal.aborted
         const isBodyError = e instanceof TypeError && String(e).includes(`Body`)
         if (!isAborted && !isBodyError) {
-          this.#markError(e instanceof Error ? e : new Error(String(e)))
+          this.#markError(toError(e))
         } else {
           this.#markClosed()
         }
@@ -1605,7 +1557,7 @@ export class StreamResponseImpl<
         const isAborted = abortController.signal.aborted
         const isBodyError = e instanceof TypeError && String(e).includes(`Body`)
         if (!isAborted && !isBodyError) {
-          this.#markError(e instanceof Error ? e : new Error(String(e)))
+          this.#markError(toError(e))
         } else {
           this.#markClosed()
         }
@@ -1640,6 +1592,33 @@ export class StreamResponseImpl<
 // =================================
 // Pure helper functions
 // =================================
+
+/**
+ * Coerce an unknown caught value to an Error instance.
+ */
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err))
+}
+
+/**
+ * Parse JSON text from a response body, normalizing empty content to an empty array.
+ * Throws a DurableStreamError with a preview of the invalid data on parse failure.
+ */
+function parseJsonText<T>(text: string): Array<T> {
+  const content = text.trim() || `[]`
+  let parsed: T | Array<T>
+  try {
+    parsed = JSON.parse(content) as T | Array<T>
+  } catch (err) {
+    const preview =
+      content.length > 100 ? content.slice(0, 100) + `...` : content
+    throw new DurableStreamError(
+      `Failed to parse JSON response: ${toError(err).message}. Data: ${preview}`,
+      `PARSE_ERROR`
+    )
+  }
+  return Array.isArray(parsed) ? parsed : [parsed]
+}
 
 /**
  * Extract stream metadata from Response headers.
@@ -1708,30 +1687,6 @@ function decodeBase64(base64Str: string): Uint8Array {
       `PARSE_ERROR`
     )
   }
-}
-
-/**
- * Create a synthetic Response from SSE data with proper headers.
- * Includes offset/cursor/upToDate/streamClosed in headers so subscribers can read them.
- */
-function createSSESyntheticResponse(
-  data: string,
-  offset: Offset,
-  cursor: string | undefined,
-  upToDate: boolean,
-  streamClosed: boolean,
-  contentType: string | undefined,
-  encoding: `base64` | undefined
-): Response {
-  return createSSESyntheticResponseFromParts(
-    [data],
-    offset,
-    cursor,
-    upToDate,
-    streamClosed,
-    contentType,
-    encoding
-  )
 }
 
 /**
