@@ -9,10 +9,10 @@ import { DurableStream } from "../src/stream"
 import { FetchError } from "../src/error"
 
 describe(`backoff integration`, () => {
-  let mockFetch: ReturnType<typeof vi.fn>
+  let mockFetch: typeof fetch & ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    mockFetch = vi.fn()
+    mockFetch = vi.fn<typeof fetch>()
   })
 
   it(`should respect custom backoffOptions`, async () => {

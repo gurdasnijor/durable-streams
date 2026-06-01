@@ -7,10 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { stream } from "../src/stream-api"
 
 describe(`StreamResponse metadata`, () => {
-  let mockFetch: ReturnType<typeof vi.fn>
+  let mockFetch: typeof fetch & ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    mockFetch = vi.fn()
+    mockFetch = vi.fn<typeof fetch>()
   })
 
   describe(`headers`, () => {

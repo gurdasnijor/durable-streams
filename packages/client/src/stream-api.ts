@@ -21,10 +21,13 @@ import {
 } from "./error"
 import {
   BackoffDefaults,
+  ON_ERROR_MAX_RETRIES,
   createFetchWithBackoff,
   createFetchWithChunkBuffer,
   createFetchWithConsumedBody,
   createFetchWithResponseHeadersCheck,
+  getFullJitterBackoffMs,
+  sleepWithAbort,
 } from "./fetch"
 import { StreamResponseImpl } from "./response"
 import { UpToDateTracker, canonicalStreamKey } from "./up-to-date-tracker"
@@ -91,6 +94,18 @@ export async function stream<TJson = unknown>(
   let currentHeaders = options.headers
   let currentParams = options.params
 
+  const abortController = new AbortController()
+  if (options.signal) {
+    options.signal.addEventListener(
+      `abort`,
+      () => abortController.abort(options.signal?.reason),
+      { once: true }
+    )
+  }
+
+  const backoffOptions = options.backoffOptions ?? BackoffDefaults
+  let onErrorRetryAttempt = 0
+
   // Retry loop for onError handling
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
@@ -99,6 +114,7 @@ export async function stream<TJson = unknown>(
         ...options,
         headers: currentHeaders,
         params: currentParams,
+        signal: abortController.signal,
       })
     } catch (err) {
       // Non-retryable errors bypass onError entirely
@@ -108,6 +124,10 @@ export async function stream<TJson = unknown>(
 
       // If there's an onError handler, give it a chance to recover
       if (options.onError) {
+        if (onErrorRetryAttempt >= ON_ERROR_MAX_RETRIES) {
+          throw err
+        }
+
         const retryOpts = await options.onError(
           err instanceof Error ? err : new Error(String(err))
         )
@@ -116,6 +136,8 @@ export async function stream<TJson = unknown>(
         if (retryOpts === undefined) {
           throw err
         }
+
+        onErrorRetryAttempt++
 
         // Merge returned params/headers for retry
         if (retryOpts.params) {
@@ -130,6 +152,11 @@ export async function stream<TJson = unknown>(
             ...retryOpts.headers,
           }
         }
+
+        await sleepWithAbort(
+          getFullJitterBackoffMs(onErrorRetryAttempt, backoffOptions),
+          abortController.signal
+        )
 
         // Continue to retry with updated options
         continue
@@ -195,11 +222,20 @@ async function streamInternal<TJson = unknown>(
   )
 
   // For subsequent chunk fetches with speculative prefetch:
-  const chunkFetchClient = createFetchWithConsumedBody(
+  const prefetchChunkClient = createFetchWithConsumedBody(
     createFetchWithResponseHeadersCheck(
       createFetchWithChunkBuffer(backoffClient, options.prefetchOptions)
     )
   )
+
+  const hasDynamicValues = (record?: HeadersRecord | ParamsRecord): boolean =>
+    Object.values(record ?? {}).some((value) => typeof value === `function`)
+
+  // Prefetch reuses the current request's resolved headers/params for the
+  // speculative next request. That is only safe for static records; dynamic
+  // header/param functions must be resolved once per logical poll.
+  const baseOptionsHaveDynamicRequestValues =
+    hasDynamicValues(options.headers) || hasDynamicValues(options.params)
 
   // For SSE connections (must NOT consume body — it's a long-lived stream):
   const sseFetchClient = createFetchWithResponseHeadersCheck(backoffClient)
@@ -297,7 +333,16 @@ async function streamInternal<TJson = unknown>(
       ...(await resolveHeaders(overrideHeaders)),
     }
 
-    const response = await chunkFetchClient(nextUrl.toString(), {
+    const requestHasDynamicValues =
+      baseOptionsHaveDynamicRequestValues ||
+      hasDynamicValues(overrideHeaders) ||
+      hasDynamicValues(overrideParams)
+
+    const fetchClient = requestHasDynamicValues
+      ? baseChunkClient
+      : prefetchChunkClient
+
+    const response = await fetchClient(nextUrl.toString(), {
       method: `GET`,
       headers: nextHeaders,
       signal,
@@ -376,5 +421,6 @@ async function streamInternal<TJson = unknown>(
     upToDateTracker,
     streamKey,
     fastLoopOptions: options.fastLoopOptions,
+    backoffOptions,
   })
 }

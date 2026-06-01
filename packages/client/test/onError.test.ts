@@ -8,10 +8,10 @@ import { stream } from "../src/stream-api"
 import { FetchError, MissingHeadersError } from "../src/error"
 
 describe(`onError handler`, () => {
-  let mockFetch: ReturnType<typeof vi.fn>
+  let mockFetch: typeof fetch & ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    mockFetch = vi.fn()
+    mockFetch = vi.fn<typeof fetch>()
   })
 
   it(`should retry on error if error handler returns empty object`, async () => {
@@ -38,7 +38,12 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       headers: { Authorization: `Bearer initial-token` },
-      backoffOptions: { maxRetries: 0 }, // Disable backoff retries
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      }, // Disable backoff retries
       onError,
     })
 
@@ -74,7 +79,12 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       headers: { Authorization: `Bearer expired-token` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
@@ -82,7 +92,7 @@ describe(`onError handler`, () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
 
     // Second call should have refreshed token
-    const secondCall = mockFetch.mock.calls[1]
+    const secondCall = mockFetch.mock.calls[1]!
     expect(secondCall[1].headers).toMatchObject({
       Authorization: `Bearer refreshed-token`,
     })
@@ -114,7 +124,12 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       params: { tenant: `invalid-tenant` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
@@ -122,8 +137,8 @@ describe(`onError handler`, () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
 
     // Second call should have updated param
-    const firstUrl = new URL(mockFetch.mock.calls[0][0])
-    const secondUrl = new URL(mockFetch.mock.calls[1][0])
+    const firstUrl = new URL(mockFetch.mock.calls[0]![0])
+    const secondUrl = new URL(mockFetch.mock.calls[1]![0])
     expect(firstUrl.searchParams.get(`tenant`)).toBe(`invalid-tenant`)
     expect(secondUrl.searchParams.get(`tenant`)).toBe(`valid-tenant`)
   })
@@ -155,17 +170,22 @@ describe(`onError handler`, () => {
       fetch: mockFetch,
       headers: { "X-Custom-Header": `should-be-preserved` },
       params: { tenant: `abc` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
     expect(mockFetch).toHaveBeenCalledTimes(2)
 
     // Both calls should have the custom header
-    expect(mockFetch.mock.calls[0][1].headers).toMatchObject({
+    expect(mockFetch.mock.calls[0]![1].headers).toMatchObject({
       "X-Custom-Header": `should-be-preserved`,
     })
-    expect(mockFetch.mock.calls[1][1].headers).toMatchObject({
+    expect(mockFetch.mock.calls[1]![1].headers).toMatchObject({
       "X-Custom-Header": `should-be-preserved`,
     })
   })
@@ -197,15 +217,20 @@ describe(`onError handler`, () => {
       fetch: mockFetch,
       headers: { Authorization: `Bearer old-token` },
       params: { tenant: `abc`, important: `param` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
     expect(mockFetch).toHaveBeenCalledTimes(2)
 
     // Both calls should have the params
-    const firstUrl = new URL(mockFetch.mock.calls[0][0])
-    const secondUrl = new URL(mockFetch.mock.calls[1][0])
+    const firstUrl = new URL(mockFetch.mock.calls[0]![0])
+    const secondUrl = new URL(mockFetch.mock.calls[1]![0])
     expect(firstUrl.searchParams.get(`tenant`)).toBe(`abc`)
     expect(firstUrl.searchParams.get(`important`)).toBe(`param`)
     expect(secondUrl.searchParams.get(`tenant`)).toBe(`abc`)
@@ -226,7 +251,12 @@ describe(`onError handler`, () => {
       stream({
         url: `https://example.com/stream`,
         fetch: mockFetch,
-        backoffOptions: { maxRetries: 0 },
+        backoffOptions: {
+          maxRetries: 0,
+          initialDelay: 1,
+          maxDelay: 10,
+          multiplier: 1,
+        },
         onError,
       })
     ).rejects.toThrow(FetchError)
@@ -267,13 +297,18 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       headers: { Authorization: `Bearer stale-token` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
     expect(onError).toHaveBeenCalledOnce()
     expect(mockFetch).toHaveBeenCalledTimes(2)
-    expect(mockFetch.mock.calls[1][1].headers).toMatchObject({
+    expect(mockFetch.mock.calls[1]![1].headers).toMatchObject({
       Authorization: `Bearer fresh-token`,
     })
   })
@@ -313,7 +348,12 @@ describe(`onError handler`, () => {
       stream({
         url: `https://example.com/stream`,
         fetch: mockFetch,
-        backoffOptions: { maxRetries: 0 },
+        backoffOptions: {
+          maxRetries: 0,
+          initialDelay: 1,
+          maxDelay: 10,
+          multiplier: 1,
+        },
       })
     ).rejects.toThrow(FetchError)
 
@@ -338,7 +378,12 @@ describe(`onError handler`, () => {
         stream({
           url: `https://example.com/stream`,
           fetch: mockFetch,
-          backoffOptions: { maxRetries: 0 },
+          backoffOptions: {
+            maxRetries: 0,
+            initialDelay: 1,
+            maxDelay: 10,
+            multiplier: 1,
+          },
           onError,
         })
       ).rejects.toThrow()
@@ -373,11 +418,16 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       params: { override: `old-value`, keep: `this` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
-    const secondUrl = new URL(mockFetch.mock.calls[1][0])
+    const secondUrl = new URL(mockFetch.mock.calls[1]![0])
     expect(secondUrl.searchParams.get(`override`)).toBe(`new-value`)
     expect(secondUrl.searchParams.get(`keep`)).toBe(`this`)
   })
@@ -408,11 +458,16 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       headers: { Authorization: `Bearer old`, "X-Keep": `this` },
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
-    expect(mockFetch.mock.calls[1][1].headers).toMatchObject({
+    expect(mockFetch.mock.calls[1]![1].headers).toMatchObject({
       Authorization: `Bearer new`,
       "X-Keep": `this`,
     })
@@ -465,7 +520,12 @@ describe(`onError handler`, () => {
       fetch: mockFetch,
       headers: { Authorization: `Bearer expired-token` },
       live: `long-poll`,
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
@@ -479,7 +539,7 @@ describe(`onError handler`, () => {
     expect(mockFetch).toHaveBeenCalledTimes(3)
 
     // Third request should include the new Authorization header
-    const thirdCall = mockFetch.mock.calls[2]
+    const thirdCall = mockFetch.mock.calls[2]!
     expect(thirdCall[1].headers).toMatchObject({
       Authorization: `Bearer valid-token`,
     })
@@ -528,7 +588,12 @@ describe(`onError handler`, () => {
       fetch: mockFetch,
       params: { tenant: `wrong-tenant` },
       live: `long-poll`,
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
@@ -538,10 +603,116 @@ describe(`onError handler`, () => {
     expect(mockFetch).toHaveBeenCalledTimes(3)
 
     // Third request should include the corrected param
-    const thirdUrl = new URL(mockFetch.mock.calls[2][0])
+    const thirdUrl = new URL(mockFetch.mock.calls[2]![0])
     expect(thirdUrl.searchParams.get(`tenant`)).toBe(`correct-tenant`)
 
     expect(items).toEqual([{ id: 1 }, { id: 2 }])
+  })
+
+  it(`should bound initial onError retries`, async () => {
+    mockFetch.mockResolvedValue(
+      new Response(null, {
+        status: 401,
+        statusText: `Unauthorized`,
+      })
+    )
+
+    const onError = vi.fn().mockResolvedValue({})
+
+    await expect(
+      stream({
+        url: `https://example.com/stream`,
+        fetch: mockFetch,
+        backoffOptions: {
+          initialDelay: 1,
+          maxDelay: 1,
+          multiplier: 1,
+          maxRetries: 0,
+        },
+        onError,
+      })
+    ).rejects.toThrow(FetchError)
+
+    expect(onError).toHaveBeenCalledTimes(50)
+    expect(mockFetch).toHaveBeenCalledTimes(51)
+  })
+
+  it(`should apply full-jitter backoff between initial onError retries`, async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, `random`).mockReturnValue(0.5)
+    const setTimeoutSpy = vi.spyOn(globalThis, `setTimeout`)
+
+    mockFetch
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: {
+            "content-type": `application/json`,
+            "Stream-Next-Offset": `1`,
+          },
+        })
+      )
+
+    const promise = stream({
+      url: `https://example.com/stream`,
+      fetch: mockFetch,
+      backoffOptions: {
+        initialDelay: 100,
+        maxDelay: 1000,
+        multiplier: 2,
+        maxRetries: 0,
+      },
+      onError: vi.fn().mockResolvedValue({}),
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 50)
+
+    await vi.advanceTimersByTimeAsync(50)
+    await Promise.resolve()
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 100)
+
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(promise).resolves.toBeDefined()
+
+    setTimeoutSpy.mockRestore()
+    randomSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it(`should not retry initial onError after abort during backoff`, async () => {
+    vi.useFakeTimers()
+    mockFetch.mockResolvedValue(new Response(null, { status: 401 }))
+
+    const abortController = new AbortController()
+    const promise = stream({
+      url: `https://example.com/stream`,
+      fetch: mockFetch,
+      signal: abortController.signal,
+      backoffOptions: {
+        initialDelay: 1000,
+        maxDelay: 1000,
+        multiplier: 1,
+        maxRetries: 0,
+      },
+      onError: vi.fn().mockResolvedValue({}),
+    })
+
+    const rejection = expect(promise).rejects.toThrow()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    abortController.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    await rejection
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 
   it(`should not retry MissingHeadersError even if onError returns {}`, async () => {
@@ -575,7 +746,12 @@ describe(`onError handler`, () => {
       url: `https://example.com/stream`,
       fetch: mockFetch,
       live: `long-poll`,
-      backoffOptions: { maxRetries: 0 },
+      backoffOptions: {
+        maxRetries: 0,
+        initialDelay: 1,
+        maxDelay: 10,
+        multiplier: 1,
+      },
       onError,
     })
 
@@ -599,10 +775,10 @@ describe(`onError handler`, () => {
 // ============================================================================
 
 describe(`onError handler error visibility`, () => {
-  let mockFetch: ReturnType<typeof vi.fn>
+  let mockFetch: typeof fetch & ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    mockFetch = vi.fn()
+    mockFetch = vi.fn<typeof fetch>()
   })
 
   // EXPECTED TO FAIL — exposes bug #7

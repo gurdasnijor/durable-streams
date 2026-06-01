@@ -15,6 +15,12 @@ import {
 } from "./constants"
 import { DurableStreamError, FetchError, MissingHeadersError } from "./error"
 import { FastLoopDetector } from "./fast-loop-detection"
+import {
+  BackoffDefaults,
+  ON_ERROR_MAX_RETRIES,
+  getFullJitterBackoffMs,
+  sleepWithAbort,
+} from "./fetch"
 import { PauseLock } from "./pause-lock"
 import { parseSSEStream } from "./sse"
 import {
@@ -28,6 +34,7 @@ import {
   createCacheBuster,
 } from "./stream-response-state"
 import { subscribeToWakeDetection } from "./wake-detection"
+import type { BackoffOptions } from "./fetch"
 import type { FastLoopDetectorOptions } from "./fast-loop-detection"
 import type { UpToDateTracker } from "./up-to-date-tracker"
 import type { ReadableStreamAsyncIterable } from "./asyncIterableReadableStream"
@@ -111,6 +118,8 @@ export interface StreamResponseConfig {
   streamKey?: string
   /** Options for the fast loop detector */
   fastLoopOptions?: FastLoopDetectorOptions
+  /** Backoff options for onError retry delays */
+  backoffOptions?: BackoffOptions
 }
 
 /**
@@ -163,6 +172,8 @@ export class StreamResponseImpl<
 
   // --- Error Recovery ---
   #onError?: StreamErrorHandler
+  #backoffOptions: BackoffOptions
+  #onErrorRetryAttempt = 0
 
   // --- Fast Loop Detection ---
   #fastLoopDetector: FastLoopDetector
@@ -248,6 +259,7 @@ export class StreamResponseImpl<
 
     // Initialize error handler
     this.#onError = config.onError
+    this.#backoffOptions = config.backoffOptions ?? BackoffDefaults
 
     // Initialize fast loop detector
     this.#fastLoopDetector = new FastLoopDetector(config.fastLoopOptions)
@@ -971,7 +983,10 @@ export class StreamResponseImpl<
             }
 
             // Duplicate-URL guard: detect when the same request would be made repeatedly
-            let cacheBuster: string | undefined
+            let cacheBuster: string | undefined =
+              this.#syncState instanceof StaleRetryState
+                ? this.#syncState.cacheBuster
+                : undefined
             const requestKey = `${this.offset}|${this.cursor ?? ``}`
             if (!isLiveRequest && lastRequestUrl === requestKey) {
               this.#duplicateUrlCount++
@@ -1007,6 +1022,7 @@ export class StreamResponseImpl<
             )
 
             this.#updateStateFromResponse(response)
+            this.#onErrorRetryAttempt = 0
 
             // Trigger message batch transition (SyncingState -> LiveState on upToDate)
             let suppressBatch = false
@@ -1085,11 +1101,21 @@ export class StreamResponseImpl<
               if (this.#syncState instanceof ActiveState) {
                 this.#syncState = this.#syncState.toErrorState(errorObj)
               }
+              if (this.#onErrorRetryAttempt >= ON_ERROR_MAX_RETRIES) {
+                this.#markError(
+                  err instanceof Error ? err : new Error(String(err))
+                )
+                controller.error(err)
+                return
+              }
+
               try {
                 const retryOpts = await this.#onError(
                   err instanceof Error ? err : new Error(String(err))
                 )
                 if (retryOpts !== undefined) {
+                  this.#onErrorRetryAttempt++
+
                   // Apply returned headers/params for subsequent requests
                   if (retryOpts.headers) {
                     this.#overrideHeaders = {
@@ -1108,6 +1134,13 @@ export class StreamResponseImpl<
                     this.#syncState = this.#syncState.retry()
                   }
                   this.#fastLoopDetector.reset()
+                  await sleepWithAbort(
+                    getFullJitterBackoffMs(
+                      this.#onErrorRetryAttempt,
+                      this.#backoffOptions
+                    ),
+                    this.#abortController.signal
+                  )
                   return // pull() will be called again
                 }
               } catch (handlerErr) {

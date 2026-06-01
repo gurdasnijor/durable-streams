@@ -1267,6 +1267,46 @@ describe(`fast-loop integration with stream`, () => {
     warnSpy.mockRestore()
   })
 
+  it(`should apply StaleRetryState cache_buster immediately after fast-loop detection`, async () => {
+    let callCount = 0
+    mockFetch.mockImplementation(async () => {
+      callCount++
+      return new Response(JSON.stringify([{ id: callCount }]), {
+        status: 200,
+        headers: {
+          "content-type": `application/json`,
+          [STREAM_OFFSET_HEADER]: `1_5`,
+          [STREAM_CURSOR_HEADER]: `cursor_stale`,
+        },
+      })
+    })
+
+    const warnSpy = vi.spyOn(console, `warn`).mockImplementation(() => {})
+
+    try {
+      const res = await stream({
+        url: `https://example.com/stream`,
+        fetch: mockFetch,
+        live: `long-poll`,
+        fastLoopOptions: { threshold: 1, windowMs: 10000, maxCount: 10 },
+      })
+
+      res.closed.catch(() => {})
+      const reader = res.bodyStream().getReader()
+      await reader.read()
+      await vi.waitFor(() =>
+        expect(mockFetch.mock.calls.length).toBeGreaterThan(1)
+      )
+
+      const secondUrl = new URL(mockFetch.mock.calls[1]![0] as string)
+      expect(secondUrl.searchParams.has(`cache_buster`)).toBe(true)
+
+      await reader.cancel()
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
   it(`should reset fast-loop counter after onError retry`, async () => {
     let callCount = 0
     mockFetch.mockImplementation(async () => {
@@ -1316,6 +1356,62 @@ describe(`fast-loop integration with stream`, () => {
     const items = await res.json()
     expect(onError).toHaveBeenCalledOnce()
     expect(items).toEqual([{ id: 1 }, { id: 2 }])
+  })
+
+  it(`should apply jittered backoff for post-initial onError retry and not fetch again when cancelled during backoff`, async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, `random`).mockReturnValue(0.5)
+    const setTimeoutSpy = vi.spyOn(globalThis, `setTimeout`)
+
+    try {
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: 1 }]), {
+            status: 200,
+            headers: {
+              "content-type": `application/json`,
+              [STREAM_OFFSET_HEADER]: `1_5`,
+              [STREAM_CURSOR_HEADER]: `cursor_1`,
+            },
+          })
+        )
+        .mockResolvedValue(new Response(null, { status: 500 }))
+
+      const onError = vi.fn().mockResolvedValue({})
+      const res = await stream({
+        url: `https://example.com/stream`,
+        fetch: mockFetch,
+        live: `long-poll`,
+        backoffOptions: {
+          initialDelay: 100,
+          maxDelay: 1000,
+          multiplier: 2,
+          maxRetries: 0,
+        },
+        onError,
+      })
+      res.closed.catch(() => {})
+
+      const reader = res.bodyStream().getReader()
+      await expect(reader.read()).resolves.toMatchObject({ done: false })
+      const pendingRead = reader.read()
+      await vi.waitFor(() => expect(setTimeoutSpy).toHaveBeenCalled())
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 50)).toBe(
+        true
+      )
+      expect(onError).toHaveBeenCalledOnce()
+
+      res.cancel(`cancel during onError backoff`)
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(pendingRead).resolves.toMatchObject({ done: true })
+      await expect(res.closed).resolves.toBeUndefined()
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      setTimeoutSpy.mockRestore()
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it(`should not trigger fast-loop when offsets are advancing`, async () => {

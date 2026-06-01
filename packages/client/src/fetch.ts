@@ -70,6 +70,43 @@ export const BackoffDefaults: BackoffOptions = {
   maxRetries: Infinity,
 }
 
+export const ON_ERROR_MAX_RETRIES = 50
+
+export function getFullJitterBackoffMs(
+  attempt: number,
+  options: BackoffOptions = BackoffDefaults
+): number {
+  return (
+    Math.random() *
+    Math.min(
+      options.maxDelay,
+      options.initialDelay * Math.pow(options.multiplier, attempt - 1)
+    )
+  )
+}
+
+export async function sleepWithAbort(
+  delayMs: number,
+  signal: AbortSignal
+): Promise<void> {
+  if (signal.aborted) throw new FetchBackoffAbortError()
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener(`abort`, onAbort)
+    const onAbort = () => {
+      clearTimeout(timer)
+      cleanup()
+      reject(new FetchBackoffAbortError())
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, delayMs)
+    signal.addEventListener(`abort`, onAbort, { once: true })
+    if (signal.aborted) onAbort()
+  })
+}
+
 /**
  * Parse Retry-After header value and return delay in milliseconds.
  * Supports both delta-seconds format and HTTP-date format.
@@ -378,6 +415,111 @@ export function getNextChunkUrl(
   return nextUrl
 }
 
+function getRequestUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof Request !== `undefined` && input instanceof Request) {
+    return input.url
+  }
+  return input.toString()
+}
+
+function getRequestMethod(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): string {
+  if (init?.method) return init.method.toUpperCase()
+  if (typeof Request !== `undefined` && input instanceof Request) {
+    return input.method.toUpperCase()
+  }
+  return `GET`
+}
+
+function getRequestHeaders(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): Headers {
+  if (init?.headers) return new Headers(init.headers)
+  if (typeof Request !== `undefined` && input instanceof Request) {
+    return new Headers(input.headers)
+  }
+  return new Headers()
+}
+
+const COMPATIBLE_REQUEST_OPTIONS = [
+  `cache`,
+  `credentials`,
+  `integrity`,
+  `keepalive`,
+  `mode`,
+  `redirect`,
+  `referrer`,
+  `referrerPolicy`,
+] as const
+
+type CompatibleRequestOption = (typeof COMPATIBLE_REQUEST_OPTIONS)[number]
+
+function getCompatibleRequestOptions(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): Partial<Pick<RequestInit, CompatibleRequestOption>> {
+  const options: Partial<Pick<RequestInit, CompatibleRequestOption>> = {}
+  for (const option of COMPATIBLE_REQUEST_OPTIONS) {
+    const initValue = init?.[option]
+    if (initValue !== undefined) {
+      options[option] = initValue as never
+      continue
+    }
+    if (typeof Request !== `undefined` && input instanceof Request) {
+      options[option] = input[option] as never
+    }
+  }
+  return options
+}
+
+function requestHasBody(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): boolean {
+  if (init?.body !== undefined && init.body !== null) return true
+  return (
+    typeof Request !== `undefined` &&
+    input instanceof Request &&
+    input.body !== null
+  )
+}
+
+function isPrefetchSafeRequest(...args: Parameters<typeof fetch>): boolean {
+  return (
+    getRequestMethod(args[0], args[1]) === `GET` &&
+    !requestHasBody(args[0], args[1])
+  )
+}
+
+function getPrefetchKey(...args: Parameters<typeof fetch>): string {
+  const headers = [...getRequestHeaders(args[0], args[1]).entries()]
+    .map(([name, value]) => [name.toLowerCase(), value] as const)
+    .sort(([a], [b]) => a.localeCompare(b))
+
+  return JSON.stringify({
+    url: getRequestUrl(args[0]),
+    method: getRequestMethod(args[0], args[1]),
+    headers,
+    options: getCompatibleRequestOptions(args[0], args[1]),
+  })
+}
+
+function getPrefetchInit(
+  input: Parameters<typeof fetch>[0],
+  init: Parameters<typeof fetch>[1],
+  signal: AbortSignal
+): RequestInit {
+  return {
+    ...getCompatibleRequestOptions(input, init),
+    headers: getRequestHeaders(input, init),
+    method: `GET`,
+    signal,
+  }
+}
+
 /**
  * In-order prefetch queue for chunk responses.
  * Maintains a bounded queue of speculative fetches and enforces FIFO consumption.
@@ -389,51 +531,48 @@ export class PrefetchQueue {
     string,
     { promise: Promise<Response>; abort: AbortController }
   >()
-  #headUrl: string | null = null
+  #headKey: string | null = null
 
   constructor(fetchClient: typeof fetch, maxChunks = 2) {
     this.#fetchClient = fetchClient
     this.#maxChunks = maxChunks
   }
 
-  consume(url: string): Promise<Response> | undefined {
-    if (this.#headUrl !== url) {
-      // If the URL is in the queue but not at head, preserve ordering
-      if (!this.#queue.has(url)) {
-        // URL not in queue at all — clear stale prefetches
+  consume(...args: Parameters<typeof fetch>): Promise<Response> | undefined {
+    const key = getPrefetchKey(...args)
+    if (this.#headKey !== key) {
+      // If the compatible request is in the queue but not at head, preserve ordering.
+      if (!this.#queue.has(key)) {
+        // Request not in queue at all — clear stale/incompatible prefetches.
         this.clear()
       }
       return undefined
     }
-    const entry = this.#queue.get(url)
+    const entry = this.#queue.get(key)
     if (!entry) return undefined
-    this.#queue.delete(url)
-    this.#headUrl = null
-    for (const key of this.#queue.keys()) {
-      this.#headUrl = key
+    this.#queue.delete(key)
+    this.#headKey = null
+    for (const queuedKey of this.#queue.keys()) {
+      this.#headKey = queuedKey
       break
     }
     return entry.promise
   }
 
-  prefetch(url: string, signal?: AbortSignal): void {
-    if (this.#queue.has(url)) return
+  prefetch(url: string, init?: RequestInit): void {
+    const key = getPrefetchKey(url, init)
+    if (this.#queue.has(key)) return
     if (this.#queue.size >= this.#maxChunks) return
 
     const abort = new AbortController()
-    if (signal) {
-      signal.addEventListener(`abort`, () => abort.abort(signal.reason), {
-        once: true,
-      })
-    }
 
-    const promise = this.#fetchClient(url, {
-      method: `GET`,
-      signal: abort.signal,
-    }).catch(() => new Response(null, { status: 502 }))
+    const promise = this.#fetchClient(
+      url,
+      getPrefetchInit(url, init, abort.signal)
+    ).catch(() => new Response(null, { status: 502 }))
 
-    this.#queue.set(url, { promise, abort })
-    if (!this.#headUrl) this.#headUrl = url
+    this.#queue.set(key, { promise, abort })
+    if (!this.#headKey) this.#headKey = key
   }
 
   clear(): void {
@@ -441,7 +580,7 @@ export class PrefetchQueue {
       entry.abort.abort(`prefetch-cleared`)
     }
     this.#queue.clear()
-    this.#headUrl = null
+    this.#headKey = null
   }
 }
 
@@ -459,14 +598,14 @@ export function createFetchWithChunkBuffer(
   )
 
   return async (...args: Parameters<typeof fetch>): Promise<Response> => {
-    const url = args[0].toString()
-    const method = (args[1]?.method ?? `GET`).toUpperCase()
+    const url = getRequestUrl(args[0])
 
-    if (method !== `GET`) {
+    if (!isPrefetchSafeRequest(...args)) {
+      queue.clear()
       return fetchClient(...args)
     }
 
-    const prefetched = queue.consume(url)
+    const prefetched = queue.consume(...args)
     let response: Response
     if (prefetched) {
       const prefetchedResponse = await prefetched
@@ -483,7 +622,10 @@ export function createFetchWithChunkBuffer(
     const requestUrl = new URL(url)
     const nextUrl = getNextChunkUrl(requestUrl, response)
     if (nextUrl) {
-      queue.prefetch(nextUrl.toString(), args[1]?.signal ?? undefined)
+      queue.prefetch(nextUrl.toString(), {
+        ...getCompatibleRequestOptions(args[0], args[1]),
+        headers: getRequestHeaders(args[0], args[1]),
+      })
     }
 
     return response

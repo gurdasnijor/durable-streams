@@ -721,6 +721,146 @@ describe(`createFetchWithChunkBuffer`, () => {
     await bufferedFetch(`http://example.com/?offset=0`)
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
+
+  it(`should not consume a GET prefetch for a POST Request with the same URL`, async () => {
+    const firstResponse = new Response(`get`, {
+      status: 200,
+      headers: { [STREAM_OFFSET_HEADER]: `10` },
+    })
+    const prefetchedGetResponse = new Response(`prefetched-get`, {
+      status: 200,
+    })
+    const postResponse = new Response(`post`, { status: 200 })
+    const mockFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(firstResponse)
+      .mockResolvedValueOnce(prefetchedGetResponse)
+      .mockResolvedValueOnce(postResponse)
+    const bufferedFetch = createFetchWithChunkBuffer(mockFetch)
+
+    await bufferedFetch(`http://example.com/?offset=0`)
+    const result = await bufferedFetch(
+      new Request(`http://example.com/?offset=10`, { method: `POST` })
+    )
+
+    expect(await result.text()).toBe(`post`)
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it(`should not consume a prefetch made with different request headers`, async () => {
+    const firstResponse = new Response(`tenant-a`, {
+      status: 200,
+      headers: { [STREAM_OFFSET_HEADER]: `10` },
+    })
+    const prefetchedTenantAResponse = new Response(`prefetched-tenant-a`, {
+      status: 200,
+    })
+    const tenantBResponse = new Response(`tenant-b`, { status: 200 })
+    const mockFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(firstResponse)
+      .mockResolvedValueOnce(prefetchedTenantAResponse)
+      .mockResolvedValueOnce(tenantBResponse)
+    const bufferedFetch = createFetchWithChunkBuffer(mockFetch)
+
+    await bufferedFetch(`http://example.com/?offset=0`, {
+      headers: { authorization: `Bearer tenant-a` },
+    })
+    const result = await bufferedFetch(`http://example.com/?offset=10`, {
+      headers: { authorization: `Bearer tenant-b` },
+    })
+
+    expect(await result.text()).toBe(`tenant-b`)
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it(`should keep different credentials from consuming the same prefetch`, async () => {
+    const firstResponse = new Response(`same-origin`, {
+      status: 200,
+      headers: { [STREAM_OFFSET_HEADER]: `10` },
+    })
+    const prefetchedSameOrigin = new Response(`prefetched-same-origin`, {
+      status: 200,
+    })
+    const includeResponse = new Response(`include`, { status: 200 })
+    const mockFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(firstResponse)
+      .mockResolvedValueOnce(prefetchedSameOrigin)
+      .mockResolvedValueOnce(includeResponse)
+    const bufferedFetch = createFetchWithChunkBuffer(mockFetch)
+
+    await bufferedFetch(`http://example.com/?offset=0`, {
+      credentials: `same-origin`,
+    })
+    const result = await bufferedFetch(`http://example.com/?offset=10`, {
+      credentials: `include`,
+    })
+
+    expect(await result.text()).toBe(`include`)
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it(`should not consume prefetch for a body-bearing Request even with init GET override`, async () => {
+    const firstResponse = new Response(`first`, {
+      status: 200,
+      headers: { [STREAM_OFFSET_HEADER]: `10` },
+    })
+    const prefetchedResponse = new Response(`prefetched`, { status: 200 })
+    const freshResponse = new Response(`fresh`, { status: 200 })
+    const mockFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(firstResponse)
+      .mockResolvedValueOnce(prefetchedResponse)
+      .mockResolvedValueOnce(freshResponse)
+    const bufferedFetch = createFetchWithChunkBuffer(mockFetch)
+
+    await bufferedFetch(`http://example.com/?offset=0`)
+    const request = new Request(`http://example.com/?offset=10`, {
+      method: `POST`,
+      body: `payload`,
+    })
+    const result = await bufferedFetch(request, { method: `GET` })
+
+    expect(await result.text()).toBe(`fresh`)
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it(`should sanitize prefetch init while preserving compatible headers and options`, async () => {
+    const originalAbort = new AbortController()
+    const firstResponse = new Response(`first`, {
+      status: 200,
+      headers: { [STREAM_OFFSET_HEADER]: `10` },
+    })
+    const mockFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(firstResponse)
+      .mockResolvedValueOnce(new Response(`prefetched`, { status: 200 }))
+    const bufferedFetch = createFetchWithChunkBuffer(mockFetch)
+
+    await bufferedFetch(`http://example.com/?offset=0`, {
+      method: `GET`,
+      body: undefined,
+      signal: originalAbort.signal,
+      headers: { authorization: `Bearer token` },
+      credentials: `include`,
+      cache: `no-store`,
+      redirect: `manual`,
+    })
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    const [, prefetchInit] = mockFetch.mock.calls[1]!
+    expect(prefetchInit?.method).toBe(`GET`)
+    expect(prefetchInit?.body).toBeUndefined()
+    expect(prefetchInit?.signal).toBeInstanceOf(AbortSignal)
+    expect(prefetchInit?.signal).not.toBe(originalAbort.signal)
+    expect(new Headers(prefetchInit?.headers).get(`authorization`)).toBe(
+      `Bearer token`
+    )
+    expect(prefetchInit?.credentials).toBe(`include`)
+    expect(prefetchInit?.cache).toBe(`no-store`)
+    expect(prefetchInit?.redirect).toBe(`manual`)
+  })
 })
 
 // ============================================================================
