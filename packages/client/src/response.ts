@@ -104,7 +104,9 @@ export interface StreamResponseConfig {
   startSSE?: (
     offset: Offset,
     cursor: string | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    overrideHeaders?: HeadersRecord,
+    overrideParams?: ParamsRecord
   ) => Promise<Response>
   /** SSE resilience options */
   sseResilience?: SSEResilienceOptions
@@ -521,28 +523,35 @@ export class StreamResponseImpl<
   }
 
   /**
-   * Try to reconnect SSE and return the new iterator, or null if reconnection
-   * is not possible or fails.
+   * Try to reconnect SSE, fall back to long-poll, or close if reconnection is
+   * not possible.
    */
-  async #trySSEReconnect(): Promise<AsyncGenerator<
-    SSEEvent,
-    void,
-    undefined
-  > | null> {
+  async #trySSEReconnect(): Promise<
+    | {
+        type: `reconnected`
+        iterator: AsyncGenerator<SSEEvent, void, undefined>
+      }
+    | { type: `fallback-to-long-poll` }
+    | { type: `closed` }
+  > {
     // Check if we should fall back to long-poll
     const sseEnabled = this.#startSSE !== undefined
+    if (!(this.#syncState instanceof LiveState)) {
+      return { type: `closed` }
+    }
     if (
-      !(this.#syncState instanceof LiveState) ||
       !this.#syncState.shouldUseSse({
         liveSseEnabled: sseEnabled,
         resumingFromPause: false,
       })
     ) {
-      return null
+      return this.#syncState.sseFallbackToLongPolling
+        ? { type: `fallback-to-long-poll` }
+        : { type: `closed` }
     }
 
     if (!this.#shouldContinueLive() || !this.#startSSE) {
-      return null
+      return { type: `closed` }
     }
 
     // Check connection duration via LiveState
@@ -573,7 +582,7 @@ export class StreamResponseImpl<
             `Configuration: Nginx add 'X-Accel-Buffering: no', Caddy add 'flush_interval -1' to reverse_proxy.`
         )
       }
-      return null
+      return { type: `fallback-to-long-poll` }
     }
 
     // If it was a short connection but not yet at threshold, apply backoff
@@ -597,16 +606,21 @@ export class StreamResponseImpl<
     const newSSEResponse = await this.#startSSE(
       this.offset,
       this.cursor,
-      this.#requestAbortController.signal
+      this.#requestAbortController.signal,
+      this.#overrideHeaders,
+      this.#overrideParams
     )
     this.#updateEncodingFromSSEResponse(newSSEResponse)
     if (newSSEResponse.body) {
-      return parseSSEStream(
-        newSSEResponse.body,
-        this.#requestAbortController.signal
-      )
+      return {
+        type: `reconnected`,
+        iterator: parseSSEStream(
+          newSSEResponse.body,
+          this.#requestAbortController.signal
+        ),
+      }
     }
-    return null
+    return { type: `closed` }
   }
 
   /**
@@ -624,8 +638,10 @@ export class StreamResponseImpl<
         type: `response`
         response: Response
         newIterator?: AsyncGenerator<SSEEvent, void, undefined>
+        fallbackToLongPoll?: boolean
       }
     | { type: `closed` }
+    | { type: `fallback-to-long-poll` }
     | { type: `error`; error: Error }
     | {
         type: `continue`
@@ -637,9 +653,12 @@ export class StreamResponseImpl<
     if (done) {
       // SSE stream ended - try to reconnect
       try {
-        const newIterator = await this.#trySSEReconnect()
-        if (newIterator) {
-          return { type: `continue`, newIterator }
+        const reconnect = await this.#trySSEReconnect()
+        if (reconnect.type === `reconnected`) {
+          return { type: `continue`, newIterator: reconnect.iterator }
+        }
+        if (reconnect.type === `fallback-to-long-poll`) {
+          return { type: `fallback-to-long-poll` }
         }
       } catch (err) {
         return {
@@ -693,6 +712,7 @@ export class StreamResponseImpl<
         type: `response`
         response: Response
         newIterator?: AsyncGenerator<SSEEvent, void, undefined>
+        fallbackToLongPoll?: boolean
       }
     | { type: `error`; error: Error }
   > {
@@ -720,11 +740,13 @@ export class StreamResponseImpl<
 
         // Try to reconnect
         try {
-          const newIterator = await this.#trySSEReconnect()
+          const reconnect = await this.#trySSEReconnect()
           return {
             type: `response`,
             response,
-            newIterator: newIterator ?? undefined,
+            newIterator:
+              reconnect.type === `reconnected` ? reconnect.iterator : undefined,
+            fallbackToLongPoll: reconnect.type === `fallback-to-long-poll`,
           }
         } catch (err) {
           return {
@@ -842,7 +864,9 @@ export class StreamResponseImpl<
             const sseResponse = await this.#startSSE(
               this.offset,
               this.cursor,
-              this.#requestAbortController.signal
+              this.#requestAbortController.signal,
+              this.#overrideHeaders,
+              this.#overrideParams
             )
             this.#updateEncodingFromSSEResponse(sseResponse)
             if (sseResponse.body) {
@@ -871,9 +895,12 @@ export class StreamResponseImpl<
                 return
               }
               // Reconnect SSE after resume
-              const newIterator = await this.#trySSEReconnect()
-              if (newIterator) {
-                sseEventIterator = newIterator
+              const reconnect = await this.#trySSEReconnect()
+              if (reconnect.type === `reconnected`) {
+                sseEventIterator = reconnect.iterator
+              } else if (reconnect.type === `fallback-to-long-poll`) {
+                sseEventIterator = null
+                return
               } else {
                 // Could not reconnect - close the stream
                 this.#markClosed()
@@ -891,6 +918,8 @@ export class StreamResponseImpl<
                 case `response`:
                   if (result.newIterator) {
                     sseEventIterator = result.newIterator
+                  } else if (result.fallbackToLongPoll) {
+                    sseEventIterator = null
                   }
                   controller.enqueue(result.response)
                   return
@@ -903,6 +932,10 @@ export class StreamResponseImpl<
                 case `error`:
                   this.#markError(result.error)
                   controller.error(result.error)
+                  return
+
+                case `fallback-to-long-poll`:
+                  sseEventIterator = null
                   return
 
                 case `continue`:

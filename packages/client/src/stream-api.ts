@@ -95,12 +95,18 @@ export async function stream<TJson = unknown>(
   let currentParams = options.params
 
   const abortController = new AbortController()
-  if (options.signal) {
+  if (options.signal?.aborted) {
+    abortController.abort(options.signal.reason)
+  } else if (options.signal) {
     options.signal.addEventListener(
       `abort`,
       () => abortController.abort(options.signal?.reason),
       { once: true }
     )
+  }
+
+  if (abortController.signal.aborted) {
+    throw new DurableStreamError(`Stream request was aborted`, `UNKNOWN`)
   }
 
   const backoffOptions = options.backoffOptions ?? BackoffDefaults
@@ -211,12 +217,18 @@ async function streamInternal<TJson = unknown>(
 
   // Create abort controller
   const abortController = new AbortController()
-  if (options.signal) {
+  if (options.signal?.aborted) {
+    abortController.abort(options.signal.reason)
+  } else if (options.signal) {
     options.signal.addEventListener(
       `abort`,
       () => abortController.abort(options.signal?.reason),
       { once: true }
     )
+  }
+
+  if (abortController.signal.aborted) {
+    throw new DurableStreamError(`Stream request was aborted`, `UNKNOWN`)
   }
 
   // Build fetch client chains
@@ -249,10 +261,10 @@ async function streamInternal<TJson = unknown>(
   // For SSE connections (must NOT consume body — it's a long-lived stream):
   const sseFetchClient = createFetchWithResponseHeadersCheck(backoffClient)
 
-  // Make the first request
-  // Use SSE client for SSE mode (don't consume the long-lived body),
-  // base chunk client otherwise (no prefetch on first request)
-  const firstRequestClient = live === `sse` ? sseFetchClient : baseChunkClient
+  // Make the first request. This is always a regular catch-up request (even
+  // before SSE live mode), so use the consumed-body chunk client for first
+  // response hardening. SSE uses sseFetchClient only for the later live request.
+  const firstRequestClient = baseChunkClient
   let firstResponse: Response
   try {
     firstResponse = await firstRequestClient(fetchUrl.toString(), {
@@ -370,7 +382,9 @@ async function streamInternal<TJson = unknown>(
       ? async (
           offset: Offset,
           cursor: string | undefined,
-          signal: AbortSignal
+          signal: AbortSignal,
+          overrideHeaders?: HeadersRecord,
+          overrideParams?: ParamsRecord
         ): Promise<Response> => {
           const sseUrl = new URL(url)
           sseUrl.searchParams.set(OFFSET_QUERY_PARAM, offset)
@@ -384,8 +398,17 @@ async function streamInternal<TJson = unknown>(
           for (const [key, value] of Object.entries(sseParams)) {
             sseUrl.searchParams.set(key, value)
           }
+          if (overrideParams) {
+            const resolvedOverrideParams = await resolveParams(overrideParams)
+            for (const [key, value] of Object.entries(resolvedOverrideParams)) {
+              sseUrl.searchParams.set(key, value)
+            }
+          }
 
-          const sseHeaders = await resolveHeaders(options.headers)
+          const sseHeaders = {
+            ...(await resolveHeaders(options.headers)),
+            ...(await resolveHeaders(overrideHeaders)),
+          }
 
           const response = await sseFetchClient(sseUrl.toString(), {
             method: `GET`,
