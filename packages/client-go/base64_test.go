@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -299,6 +300,43 @@ func TestLongPollStreamClosedReturnsDoneOnNextCall(t *testing.T) {
 	_, err = it.Next()
 	if !errors.Is(err, Done) {
 		t.Fatalf("expected Done after closed chunk, got %v", err)
+	}
+}
+
+
+func TestSSEStreamClosedReturnsDoneOnNextCall(t *testing.T) {
+	server := httptest.NewServer(catchUpThenSSE(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "event: data\ndata: hello\n\n")
+		fmt.Fprintf(w, "event: control\ndata: {\"streamNextOffset\":\"5\",\"streamCursor\":\"closed-cursor\",\"upToDate\":true,\"streamClosed\":true}\n\n")
+	}))
+	defer server.Close()
+
+	client := NewClient(WithBaseURL(server.URL))
+	stream := client.Stream("/test")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	it := stream.Read(ctx, WithLive(LiveModeSSE))
+	defer it.Close()
+	mustCatchUp(t, it)
+
+	chunk, err := it.Next()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !chunk.StreamClosed {
+		t.Fatal("expected stream closed chunk")
+	}
+	if string(chunk.Data) != "hello" {
+		t.Fatalf("got data %q, want hello", string(chunk.Data))
+	}
+
+	_, err = it.Next()
+	if !errors.Is(err, Done) {
+		t.Fatalf("expected Done after closed SSE chunk, got %v", err)
 	}
 }
 

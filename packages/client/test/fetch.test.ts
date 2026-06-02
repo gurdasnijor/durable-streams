@@ -907,7 +907,6 @@ describe(`createFetchWithChunkBuffer`, () => {
 // ============================================================================
 
 describe(`PrefetchQueue error handling bugs`, () => {
-  // EXPECTED TO FAIL — exposes bug #5
   // When a prefetched request fails (network error), the consumer receives a
   // synthetic 599 response that gets fed into header validation, causing
   // MissingHeadersError instead of falling back to a fresh fetch.
@@ -936,8 +935,6 @@ describe(`PrefetchQueue error handling bugs`, () => {
     // Expected: The queue should not mask errors as synthetic responses.
     expect(result.status).not.toBe(599)
   })
-
-  // EXPECTED TO FAIL — exposes bug #6
   // When consume() is called with a URL that doesn't match the head of the queue,
   // the stale prefetched responses should be cleared/aborted.
   it(`consume with mismatched URL should clear stale prefetches`, () => {

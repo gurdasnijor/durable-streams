@@ -868,7 +868,6 @@ describe(`Tier 5: Dedicated tests`, () => {
 // ============================================================================
 
 describe(`PausedState type safety`, () => {
-  // EXPECTED TO FAIL — exposes bug #10
   // PausedState.handleResponseMetadata delegates to inner state and wraps result.
   // When the inner handleResponseMetadata returns { action: 'accepted', state: ActiveState },
   // PausedState wraps it with `new PausedState(inner.state) as unknown as ActiveState`.

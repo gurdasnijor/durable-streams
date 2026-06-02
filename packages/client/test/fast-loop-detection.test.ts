@@ -82,7 +82,6 @@ describe(`FastLoopDetector`, () => {
 // ============================================================================
 
 describe(`backoff delay minimum floor`, () => {
-  // EXPECTED TO FAIL — exposes bug #11
   // The backoff delay calculation uses `Math.floor(Math.random() * maxDelay)`.
   // When Math.random() returns a very small value (close to 0), the delay can be 0ms,
   // effectively turning the backoff into no delay at all.

@@ -563,7 +563,15 @@ export class PrefetchQueue {
     const promise = this.#fetchClient(
       url,
       getPrefetchInit(url, init, abort.signal)
-    ).catch(() => new Response(null, { status: 502 }))
+    ).catch((err: unknown) => {
+      if (!(err instanceof FetchBackoffAbortError)) {
+        console.warn(
+          `[durable-streams] Prefetch failed, will fetch on demand:`,
+          err
+        )
+      }
+      return new Response(null, { status: 502 })
+    })
 
     this.#queue.set(key, { promise, abort })
     if (!this.#headKey) this.#headKey = key

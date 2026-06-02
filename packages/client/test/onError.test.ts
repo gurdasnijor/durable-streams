@@ -780,8 +780,6 @@ describe(`onError handler error visibility`, () => {
   beforeEach(() => {
     mockFetch = vi.fn<typeof fetch>()
   })
-
-  // EXPECTED TO FAIL — exposes bug #7
   // When MissingHeadersError occurs mid-stream and the user's onError handler
   // itself throws, the handler error should be logged, not silently swallowed.
   // The current code has `catch { /* ignore */ }` which silently drops the error.
@@ -836,8 +834,6 @@ describe(`onError handler error visibility`, () => {
 
     warnSpy.mockRestore()
   })
-
-  // EXPECTED TO FAIL — exposes bug #8
   // When onError throws during recoverable error recovery, it should be logged
   // before falling through to fatal. Currently the code has `catch { /* ignore */ }`
   // which silently drops the handler error.

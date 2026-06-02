@@ -398,6 +398,9 @@ func (it *ChunkIterator) nextSSE() (*Chunk, error) {
 			}
 			it.UpToDate = e.UpToDate
 			it.StreamClosed = e.StreamClosed
+			if e.StreamClosed {
+				it.doneOnce = true
+			}
 
 			// If we have pending data, complete and return it
 			if it.ssePending != nil {

@@ -352,8 +352,9 @@ export class IdempotentProducer {
 
     try {
       await this.flush()
-    } catch {
-      // Ignore errors during detach
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      this.#onError?.(error)
     }
   }
 

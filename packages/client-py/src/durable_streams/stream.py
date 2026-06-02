@@ -42,12 +42,12 @@ ON_ERROR_MAX_RETRIES = 50
 
 
 def _sleep_before_retry(retry_count: int) -> None:
-    """Small bounded backoff with jitter for on_error retries."""
+    """Full-jitter backoff for on_error retries, aligned with TypeScript."""
     import random
     import time
 
-    delay = min(0.001 * (2 ** min(retry_count, 6)), 0.05)
-    time.sleep(delay + random.uniform(0, delay))
+    cap = min(32.0, 1.0 * (2 ** min(retry_count - 1, 5)))
+    time.sleep(random.uniform(0, cap))
 
 
 def stream(
