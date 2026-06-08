@@ -15,9 +15,9 @@
 >    still has `WebhookManager` create L1 consumers during subscription creation. This is a
 >    known area where the L1/L2 boundary is not yet fully clean.
 >
-> The restructured specs (`docs/layered-consumer-spec.md` and `PROTOCOL.md` §§ 6–7) document the
-> _actual_ achieved separation: L1 provides consumer identity, epoch, ack, and lease; L2
-> provides wake-up mechanisms (L2/A webhook, L2/B pull-wake).
+> `PROTOCOL.md` §§ 6–7 is the canonical target for reserved subscription APIs
+> and delivery semantics. Older layered-consumer spike docs have been removed;
+> use this RFC only as design history.
 
 ## Summary
 

@@ -129,10 +129,9 @@ The conformance test suite covers:
 
 ## Draft Coordination Coverage
 
-`PROTOCOL.md` Section 7.4 and `docs/layered-consumer-spec.md` Part IV define
-draft coordination substrate extensions. A server should not advertise one of
-these capabilities until this package contains passing conformance coverage for
-it.
+`PROTOCOL.md` Section 7.4 defines draft coordination substrate extensions. A
+server should not advertise one of these capabilities until this package
+contains passing conformance coverage for it.
 
 ### Filtered Subscriptions
 

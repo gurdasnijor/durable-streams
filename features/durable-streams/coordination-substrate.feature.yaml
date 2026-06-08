@@ -9,6 +9,7 @@ components:
       1: "Canonical coordination subscription APIs live under the reserved `__ds/subscriptions` namespace."
       2: "New coordination work must not expand or preserve older `/consumers` APIs."
       3: Subscription create and reconfirmation include any filter configuration in the normalized idempotency hash.
+      4: "Until filtered subscriptions are implemented, a subscription request containing `filter` is rejected instead of silently treated as an unfiltered subscription."
   FILTERS:
     requirements:
       1: Filtered subscriptions use the existing CEL library as the only filter language for the first slice.
@@ -29,11 +30,11 @@ components:
       7: Deterministic target append rejection records failed schedule status instead of retrying forever.
   CLIENT:
     requirements:
-      1: "`effect-durable-streams` exposes protocol-shaped typed Effect wrappers for subscription and schedule endpoints."
+      1: "`effect-durable-streams` exposes typed Effect bindings for concrete reserved subscription and schedule HTTP endpoints."
       2: Effect client helpers must not import server internals.
       3: Effect client helpers must not own a scheduler, predicate index, or dedupe store.
-      4: Effect client wrappers must not own heartbeat policy, handler lifecycle, worker pooling, or retry loops.
-      5: Effect client wrappers must not evaluate CEL locally.
+      4: Effect client bindings must not own heartbeat policy, handler lifecycle, worker pooling, or retry loops.
+      5: Effect client bindings must not evaluate CEL locally.
   EXECUTION:
     requirements:
       1: "`effect-durable-execution` named steps replay from session stream facts and commit through producer fencing."

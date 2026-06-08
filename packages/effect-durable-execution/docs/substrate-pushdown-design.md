@@ -90,7 +90,7 @@ filters.
 
 When adding a durable primitive, use this order:
 
-1. update `PROTOCOL.md` and `docs/layered-consumer-spec.md`;
+1. update `PROTOCOL.md`;
 2. add or update `packages/server-conformance-tests` coverage;
 3. implement the server substrate capability;
 4. expose the capability through `packages/effect-durable-streams`; and

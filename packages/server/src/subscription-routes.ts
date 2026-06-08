@@ -364,6 +364,12 @@ export class SubscriptionRoutes {
     if (!pattern && streams.length === 0) {
       return { error: `At least one of pattern or streams is required` }
     }
+    if (`filter` in payload) {
+      // coordination-substrate.SUBSCRIPTIONS.4
+      return {
+        error: `filter is not supported by this server; filtered subscriptions must not be silently treated as unfiltered subscriptions`,
+      }
+    }
 
     const leaseTtl =
       payload.lease_ttl_ms === undefined

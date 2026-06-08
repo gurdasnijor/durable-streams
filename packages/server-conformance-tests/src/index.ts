@@ -11179,6 +11179,59 @@ export function runConformanceTests(options: ConformanceTestOptions): void {
       expect(body.error.code).toBe(`WEBHOOK_URL_REJECTED`)
     })
 
+    test(`coordination-substrate.SUBSCRIPTIONS.4 rejects filters without creating subscription state`, async () => {
+      const receiver = await createWebhookReceiver()
+      const cases = [
+        {
+          id: `pull-filter-${ts()}`,
+          body: {
+            type: `pull-wake`,
+            pattern: `events/*`,
+            wake_stream: `wake/filter-${ts()}`,
+            filter: {
+              language: `cel`,
+              expression: `event.type == "ready"`,
+            },
+          },
+        },
+        {
+          id: `webhook-filter-${ts()}`,
+          body: {
+            type: `webhook`,
+            pattern: `events/*`,
+            webhook: { url: receiver.url },
+            filter: {
+              language: `cel`,
+              expression: `event.type == "ready"`,
+            },
+          },
+        },
+      ]
+
+      try {
+        for (const item of cases) {
+          const res = await fetch(subUrl(item.id), {
+            method: `PUT`,
+            headers: { "content-type": `application/json` },
+            body: JSON.stringify(item.body),
+          })
+          expect(res.status).toBe(400)
+          const body = (await res.json()) as {
+            error: { code: string; message: string }
+          }
+          expect(body.error.code).toBe(`INVALID_REQUEST`)
+          expect(body.error.message).toContain(`filter is not supported`)
+
+          const get = await fetch(subUrl(item.id))
+          expect(get.status).toBe(404)
+          const getBody = (await get.json()) as { error: { code: string } }
+          expect(getBody.error.code).toBe(`SUBSCRIPTION_NOT_FOUND`)
+        }
+      } finally {
+        await receiver.close()
+      }
+    })
+
     test(`webhook synchronous done auto-acks the wake snapshot`, async () => {
       const receiver = await createWebhookReceiver({ response: { done: true } })
       const id = `sub-${ts()}`
