@@ -18,7 +18,7 @@ let runtime: EffectRuntime
 const N = 500
 
 // ============================================================================
-// Firegrid-shaped payloads. The exact field set isn't load-bearing — what
+// Workflow-shaped payloads. The exact field set isn't load-bearing — what
 // matters is the size class (single-line JSON, multi-line embedded text,
 // multi-field deeply-nested structure) since the encode cost varies a lot
 // across them.

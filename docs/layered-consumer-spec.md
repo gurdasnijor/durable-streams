@@ -9,6 +9,11 @@ This document specifies the complete behavior of the Named Consumer protocol and
 - **Layer 2 (L2)**: Wake-Up Mechanisms — two mechanisms that notify consumers of pending work:
   - **L2/A (Webhook)**: Server-initiated push via HTTP POST to a registered URL
   - **L2/B (Pull-Wake)**: Worker-initiated pull via a shared Durable Stream used as a wake notification channel
+- **Layer 3 (L3)**: Coordination substrate extensions — product-neutral helpers built from L0/L1/L2:
+  - filtered subscriptions for durable predicate wake-up
+  - scheduled append for durable timers
+  - commit-once append via producer tuples
+  - child/attachment composition using ordinary streams and subscriptions
 
 L1 is fully specified here and corresponds to PROTOCOL.md § 6 (Named Consumers). L2/A corresponds to PROTOCOL.md § 7.1 (Webhook). L2/B corresponds to PROTOCOL.md § 7.2 (Pull-Wake).
 
@@ -18,6 +23,10 @@ L1 is fully specified here and corresponds to PROTOCOL.md § 6 (Named Consumers)
 
 ```
 ┌─────────────────────────────────────────────────────┐
+│  L3: Coordination substrate                         │
+│  Filtered wake, scheduled append, commit-once,      │
+│  child/attachment composition                       │
+├─────────────────────────────────────────────────────┤
 │  L2/A: Webhook          │  L2/B: Pull-Wake          │
 │  Subscription, wake     │  Wake stream (L0),        │
 │  delivery, callback,    │  race-to-claim via        │
@@ -32,7 +41,7 @@ L1 is fully specified here and corresponds to PROTOCOL.md § 6 (Named Consumers)
 │  Critical callbacks (L2 can fail an acquire)        │
 ├─────────────────────────────────────────────────────┤
 │  L0: Durable Streams Core                           │
-│  Streams, offsets, HTTP reads                       │
+│  Streams, offsets, HTTP reads, producer fencing     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -42,6 +51,13 @@ L1 is fully specified here and corresponds to PROTOCOL.md § 6 (Named Consumers)
 
 - **L2/A (Webhook)**: Server pushes HMAC-signed HTTP POST to a registered URL. Consumers process events and respond via callback API.
 - **L2/B (Pull-Wake)**: Server writes wake/claimed events to a Durable Stream. Workers poll that stream and race to claim work via `POST /consumers/{id}/acquire`.
+
+**L3 is still Durable Streams substrate.** L3 does not introduce a workflow
+runtime, handler scheduler, or application-specific state machine. It packages
+coordination operations that otherwise get rebuilt by each application layer:
+predicate wake-up, durable timers, idempotent ingress, and parent/child stream
+coordination. L3 is allowed to know L0/L1/L2; application authoring libraries
+should consume it through a client capability rather than reimplementing it.
 
 **Known compromises in the current implementation** (see § L2/A Implementation Notes):
 
@@ -803,6 +819,112 @@ Pull-wake registers a **critical** epoch-acquired callback on L1. When any code 
 **S-PW2 — Claimed Event on Acquire**: Every successful epoch acquisition appends a `claimed` event to the wake stream. This is guaranteed by the critical callback mechanism — if the append fails, the acquire itself fails.
 
 **S-PW3 — No Duplicate Wakes While Reading**: While the consumer is in READING state, new appends to subscribed streams do not produce additional wake events.
+
+---
+
+## Part IV — Layer 3: Coordination Substrate Extensions
+
+L3 is the boundary for pushing coordination semantics down into Durable Streams.
+It is deliberately product-neutral: these operations are useful to workflow
+engines, webhook processors, AI agent sessions, ingestion systems, and
+serverless workers.
+
+### Ownership Boundary
+
+| Capability                  | Durable Streams owns                                                     | Application layer owns                                             |
+| --------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Durable wait / predicate    | Filter persistence, event evaluation, wake generation, cursor safety      | Predicate authoring, domain schemas, action to run after wake      |
+| Durable sleep / timer       | Schedule durability, no-early fire, append on fire, cancellation         | Choosing timer IDs, interpreting the timer fact                    |
+| Idempotent ingress / step   | Producer tuple fencing and duplicate classification                      | Stable idempotency key selection and domain-level result handling  |
+| Child stream / attachment   | Stream lifecycle, subscription wake, producer-fenced terminal facts      | Child naming, payload schemas, parent-side interpretation          |
+
+The application layer should not carry a second predicate registry, timer heap,
+or deduplication table for these behaviors. If a product needs one of those, it
+is evidence that the substrate contract is missing or not exposed through the
+client yet.
+
+### Filtered Wake
+
+Filtered wake extends L2 subscriptions with a server-side predicate. The filter
+decides whether an append creates pending work; it does not filter normal stream
+reads. This allows an application to wait for facts such as "PR merged",
+"tool terminal result", or "child closed" without hosting its own polling loop
+and predicate index.
+
+Required properties:
+
+- The filter is part of subscription identity and idempotency.
+- Non-matching events do not wake the subscription.
+- A matching event wakes through the same webhook or pull-wake path as any other
+  subscription.
+- The public ack cursor remains controlled by the consumer; the server may keep
+  an internal evaluated cursor to avoid re-scanning non-matches.
+- Invalid filters fail at registration time.
+
+### Scheduled Append
+
+Scheduled append is the timer primitive. The server stores a future append and,
+at or after the scheduled instant, appends the requested fact to a normal stream.
+That append uses the regular stream append path, so producer fencing,
+content-type validation, close behavior, and subscription wake hooks remain
+identical to immediate writes.
+
+Required properties:
+
+- A schedule fires no earlier than its `at` timestamp.
+- Schedule creation is idempotent by schedule ID and normalized config.
+- Cancelling a pending schedule prevents the future append.
+- Firing survives process restart and Durable Object eviction.
+- Retried scheduler work cannot duplicate the append when a producer tuple is
+  supplied.
+
+### Commit-once Append
+
+Commit-once is not a separate L3 database. It is the existing producer tuple
+from PROTOCOL.md § 5.2.1 applied consistently at every append boundary:
+
+```text
+(stream, Producer-Id, Producer-Epoch, Producer-Seq)
+```
+
+Webhook ingress, scheduled append, durable step results, and child terminal
+facts should all choose stable producer tuples. A duplicate delivery then
+becomes a duplicate durable stream append, not a runtime-specific redrive path.
+
+### Child and Attachment Composition
+
+Child execution is modeled with ordinary streams:
+
+1. Parent appends an invocation fact to a child stream using a producer tuple.
+2. Worker or handler appends progress and terminal facts to that child stream.
+3. Parent waits through a subscription or filtered subscription for terminal
+   child facts.
+4. Parent acks the subscription after it has processed the child result.
+
+Attachment is the same model over progress facts instead of terminal facts.
+Durable Streams does not need to know what a "child workflow" is; it needs only
+stream creation, producer-fenced append, subscriptions, and optional filters.
+
+### Higher-level Runtime Surfacing
+
+A higher-level durable execution or application authoring library should expose
+domain primitives such as named steps, sleep, wait, spawn, and attach. It should
+not expose Durable Streams control endpoints or own substrate indexes.
+
+The expected consumption shape is:
+
+- the higher-level library accepts an injected client service backed by
+  `effect-durable-streams`;
+- named steps lower to producer-fenced appends and replay from the session
+  stream;
+- sleep lowers to scheduled append of a timer fact plus a filtered/pull-wake
+  wait for that fact;
+- wait lowers to a filtered subscription over the relevant fact stream;
+- spawn/attach lower to ordinary child streams plus filtered subscriptions for
+  progress or terminal facts.
+
+This keeps higher-level libraries thin: they define authoring APIs and domain
+event schemas, while Durable Streams owns the durable coordination mechanics.
 
 ---
 

@@ -3,11 +3,10 @@
 Low-level Effect adapter for the
 [Durable Streams Protocol](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md).
 
-Most Firegrid state should use
-[`effect-durable-operators` `DurableTable`](../effect-durable-operators/README.md)
-instead. Use this package only when you intentionally need raw retained stream
-semantics, such as an append-only fact stream or a generic producer-fenced
-append path.
+Use this package when you intentionally need raw retained stream semantics, such
+as an append-only fact stream or a generic producer-fenced append path. Higher
+level table, projection, or query state should use a purpose-built abstraction
+instead of raw streams.
 
 ## Public API
 
@@ -123,19 +122,24 @@ The two are **intentional siblings**, both thin delegations over the same
   `params`, `onError` (auth-refresh / signed-URL renewal), `onErrorMaxRetries`,
   and `retrySchedule` flow through every operation; `HttpClient` threads
   through `R` (provide once at the edge). Use this inside reusable
-  services/runtime layers — it's what `fluent-runtime` and `fluent-firegrid`
-  use, because they accept a caller-supplied `Endpoint` with its policy.
+  services/runtime layers, because they can accept a caller-supplied `Endpoint`
+  with its policy.
 - **`DurableStreamClient` — the optional app / edge facade.** URL-keyed,
   optional schema, batteries-included layer, `HttpClient` captured in the
   layer. Best for scripts, examples, simple/untyped clients, and raw-stream
   tooling. It takes a `url` + per-call headers, **not** a full `Endpoint`, so
   for endpoints that need `onError`/`retrySchedule` policy, prefer `define`.
 
+## Proposed Coordination Client Surface
+
+The current public API covers L0 streams and producer-fenced append. A proposed
+client surface for subscription, scheduling, and coordination helpers is tracked
+in [docs/coordination-substrate-client.md](docs/coordination-substrate-client.md).
+
 ## When Not To Use This Package
 
 Do not build table state, checkpoints, projections, or app query surfaces on
-raw streams. Model those as owner-local `DurableTable` declarations and use
-the generated `insert`, `upsert`, `delete`, `get`, `query`, `subscribe`, and
-read-only TanStack collection views.
+raw streams. Model those through a purpose-built state/query abstraction and
+reserve this package for retained stream protocol access.
 
 This package remains as the narrow raw-stream escape hatch.
