@@ -130,51 +130,16 @@ The two are **intentional siblings**, both thin delegations over the same
   tooling. It takes a `url` + per-call headers, **not** a full `Endpoint`, so
   for endpoints that need `onError`/`retrySchedule` policy, prefer `define`.
 
-## Coordination Substrate Surface
+## Proposed Coordination Client Surface
 
-The current public API covers L0 streams and producer-fenced append. The next
-client surface should expose the protocol's L1/L2/L3 coordination substrate
-directly, without making application packages hand-roll Durable Streams control
-HTTP calls.
-
-Planned service split:
-
-| Service                         | Protocol coverage                                      | Intended caller                                      |
-| ------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| `DurableSubscriptionClient`      | Reserved subscription create/read/delete, claim/ack/release | Workers, webhook receivers, runtime adapters         |
-| `DurableFilteredSubscription`    | Filtered subscription registration and wake metadata   | Durable wait and event choreography                  |
-| `DurableScheduleClient`          | Scheduled append create/read/cancel                    | Durable sleep, timeout races, delayed redrive        |
-| `DurableCoordination` helpers    | Commit-once append and child stream composition        | Thin higher-level authoring libraries                |
-
-These helpers should still be thin Effect wrappers around protocol calls. They
-must not import `packages/server` internals and must not own a second scheduler,
-predicate index, or deduplication store.
-
-### Expected Higher-level Runtime Use
-
-A higher-level durable execution library should consume these helpers through
-injected Effect services:
-
-- named `run` steps use producer-fenced appends and replay from the session
-  stream;
-- `sleep` uses `DurableScheduleClient` to append a timer fact in the future,
-  then waits through a filtered or pull-wake subscription;
-- `wait`/`awaitEvent` uses `DurableFilteredSubscription` instead of keeping a
-  runtime-owned predicate registry;
-- `spawn`/`attach` uses ordinary child streams plus filtered subscriptions for
-  progress or terminal facts; and
-- external ingress uses stable producer tuples so duplicate deliveries collapse
-  at the Durable Streams append boundary.
-
-That means the higher-level library keeps the authoring API and schemas, while
-Durable Streams owns durable wake, timer, cursor, lease, and producer-fencing
-mechanics.
+The current public API covers L0 streams and producer-fenced append. A proposed
+client surface for subscription, scheduling, and coordination helpers is tracked
+in [docs/coordination-substrate-client.md](docs/coordination-substrate-client.md).
 
 ## When Not To Use This Package
 
 Do not build table state, checkpoints, projections, or app query surfaces on
-raw streams. Model those as owner-local `DurableTable` declarations and use
-the generated `insert`, `upsert`, `delete`, `get`, `query`, `subscribe`, and
-read-only TanStack collection views.
+raw streams. Model those through a purpose-built state/query abstraction and
+reserve this package for retained stream protocol access.
 
 This package remains as the narrow raw-stream escape hatch.
