@@ -15,6 +15,14 @@ const alias = {
     __dirname,
     "./examples/yjs-demo/src"
   ),
+  "effect-durable-execution": path.resolve(
+    __dirname,
+    "./packages/effect-durable-execution/src"
+  ),
+  "effect-durable-streams": path.resolve(
+    __dirname,
+    "./packages/effect-durable-streams/src"
+  ),
   "y-durable-streams": path.resolve(
     __dirname,
     "./packages/y-durable-streams/src"
@@ -106,6 +114,14 @@ export default defineConfig({
         test: {
           name: "aisdk-transport",
           include: ["packages/aisdk-transport/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: { alias },
+      }),
+      defineProject({
+        test: {
+          name: "effect-durable-execution",
+          include: ["packages/effect-durable-execution/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
         },
         resolve: { alias },
