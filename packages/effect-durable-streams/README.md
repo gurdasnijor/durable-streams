@@ -135,7 +135,11 @@ The two are **intentional siblings**, both thin delegations over the same
 ## Reserved coordination endpoints
 
 The current public API covers L0 streams and producer-fenced append. Reserved
-coordination endpoint bindings must stay protocol-shaped and are constrained by
+coordination bindings must preserve the protocol semantics in `PROTOCOL.md`:
+subscription claims are scoped leases, producer identities are scoped fenced
+resources, schedules are delayed producer-fenced appends, and webhook handlers
+verify JWKS-backed signatures before exposing wake payloads. The boundary is
+constrained by
 [docs/reserved-protocol-bindings.md](docs/reserved-protocol-bindings.md).
 
 ## When Not To Use This Package

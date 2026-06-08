@@ -1,86 +1,153 @@
-# Reserved Protocol Bindings
+# Reserved protocol bindings
 
 ## Status
 
-This document intentionally does not define a new client abstraction.
-`PROTOCOL.md` is the source of truth for coordination semantics and endpoint
-behavior.
+`PROTOCOL.md` is the source of truth for Durable Streams semantics. This note
+constrains the first `effect-durable-streams` coordination slice so the package
+maps protocol invariants into Effect constructs instead of exposing a second
+endpoint-shaped API.
 
-The purpose of this note is to constrain the first `effect-durable-streams`
-coordination slice so it cannot drift into a worker, runtime, scheduler, or
-durable-execution layer.
+The client remains a protocol binding package. It must not become a worker
+orchestration layer, scheduler, durable execution layer, or product-specific
+deployment layer.
 
-## Scope
+Spec references: `coordination-substrate.CLIENT.1`,
+`coordination-substrate.CLIENT.2`, `coordination-substrate.CLIENT.3`,
+`coordination-substrate.CLIENT.4`, `coordination-substrate.CLIENT.5`,
+`coordination-substrate.CLIENT.6`, `coordination-substrate.CLIENT.7`,
+`coordination-substrate.CLIENT.8`, `coordination-substrate.CLIENT.9`,
+`coordination-substrate.CLIENT.10`, `coordination-substrate.CLIENT.11`,
+`coordination-substrate.CLIENT.12`.
 
-`effect-durable-streams` may expose typed Effect bindings for concrete reserved
-Durable Streams HTTP endpoints:
+## Design rule
 
-```http
-PUT    {stream-root}/__ds/subscriptions/:id
-GET    {stream-root}/__ds/subscriptions/:id
-DELETE {stream-root}/__ds/subscriptions/:id
+The public API should be named around protocol operations and invariants, not
+around HTTP endpoint rows. Endpoint paths, methods, headers, and JSON codecs are
+the transport contract. The useful client surface is the semantic mapping:
 
-POST   {stream-root}/__ds/subscriptions/:id/streams
-DELETE {stream-root}/__ds/subscriptions/:id/streams/:path
+- append-only log reads become `Stream`;
+- appends and control operations become `Effect`;
+- producer identity becomes a scoped resource with local sequence state;
+- pull-wake claims become scoped leases;
+- fencing becomes typed interruption of the work region; and
+- webhook verification becomes handler-side middleware over raw request bytes.
 
-POST   {stream-root}/__ds/subscriptions/:id/claim
-POST   {stream-root}/__ds/subscriptions/:id/ack
-POST   {stream-root}/__ds/subscriptions/:id/release
+An operation may still execute a single reserved HTTP endpoint internally. The
+API should expose what the call means to a caller that must preserve distributed
+invariants.
 
-GET    {stream-root}/__ds/jwks.json
+## Transport seam
 
-PUT    {stream-root}/__ds/schedules/:id
-GET    {stream-root}/__ds/schedules/:id
-DELETE {stream-root}/__ds/schedules/:id
-```
+HTTP remains the wire protocol. The client should continue to use the existing
+`Endpoint` and `HttpClient` plumbing for URL construction, headers, retry
+policy, auth header injection, and protocol error decoding.
 
-These bindings should model request bodies, response bodies, headers, and typed
-protocol errors for those endpoints. Endpoint URL construction, header
-resolution, retry policy, and auth headers should use the existing
-`Endpoint`/`HttpClient` plumbing.
+`@effect/rpc` is not the first-slice transport. Durable Streams already owns a
+public HTTP protocol with stable methods, paths, headers, request bodies,
+response bodies, and status codes. Adding RPC request names would create a
+parallel catalog instead of binding the protocol.
 
-The wake stream is an ordinary Durable Stream. Reading it should use the
-existing stream read APIs, not a special wake-stream abstraction.
+## Log plane
 
-## Not RPC
+Stream URLs and stream-root-relative paths are separate concepts:
 
-Do not define a parallel RPC catalog for these operations. The wire protocol is
-the Durable Streams HTTP protocol in `PROTOCOL.md`, not an Effect RPC endpoint.
+- normal log reads and writes operate on concrete stream URLs through the
+  existing `DurableStream` and `DurableStreamClient` core; and
+- reserved subscription and schedule bodies refer to stream-root-relative paths.
 
-`@effect/rpc` is the right tool when the application owns the RPC protocol on
-both client and server. This package is binding an existing public HTTP
-protocol with stable methods, paths, headers, request bodies, response bodies,
-and status codes. Introducing RPC-shaped request names would obscure the
-protocol contract and recreate a second API surface.
+Reads should remain `Stream` values. Catch-up and live reads carry opaque
+ordered offsets through protocol headers or SSE control events. `Stream-Closed`
+or `streamClosed` is the EOF signal; where an API represents a finite read, that
+signal should complete the `Stream` rather than requiring application code to
+poll forever.
 
-The useful Effect pieces here are Schema codecs for protocol payloads,
-`HttpClient` request execution, and typed protocol error decoding. The endpoint
-table remains the HTTP table above.
+Writes remain `Effect`s. A successful duplicate producer append is successful
+control flow, not an application error. A stale producer epoch is a typed,
+recoverable fencing error that gives the caller enough protocol data to decide
+whether to stop, restart with a higher epoch, or surface the failure.
+
+## Producer identity plane
+
+Producer-scoped APIs should model `(stream, Producer-Id, Producer-Epoch,
+Producer-Seq)` as stateful writer identity. The resource owns the next
+`Producer-Seq` for its epoch while the scope is open. Closing the scope releases
+only client-side state; server-side producer state remains part of the stream's
+protocol state.
+
+The producer resource must preserve these distinctions:
+
+- newly accepted append;
+- duplicate append accepted by producer deduplication;
+- stale epoch fencing;
+- sequence gap; and
+- closed-stream conflict.
+
+Schedule creation that carries a producer tuple must reuse the same tuple
+semantics at fire time. It must not introduce a client-side dedupe key or
+higher-layer "already handled" store.
+
+## Coordination plane
+
+Subscription registration is durable protocol state. The client may provide
+typed constructors for webhook and pull-wake subscription configs, filters,
+stream membership changes, and schedule configs, but it must not evaluate CEL,
+maintain a predicate index, or decide durable cursor advancement locally.
+
+Pull-wake claims are scoped leases. A successful claim should expose the wake
+snapshot and a claim token only inside a scope. Heartbeat uses the protocol ack
+endpoint without `done: true` and is bound to the same scope as the work region.
+Final ack with `done: true` and voluntary release are the only operations that
+end the lease intentionally.
+
+Generation fencing must stop the work region. When ack or release returns
+`FENCED`, the client should surface a typed fencing failure and interrupt any
+claim-scoped work that could otherwise commit after its generation lost the
+lease.
+
+The wake stream is an ordinary Durable Stream. Consuming it should reuse normal
+read APIs and then claim the referenced subscription; it should not introduce a
+special wake-stream abstraction.
+
+## Schedules
+
+Scheduled append is delayed producer-fenced append. Client helpers may encode
+schedule request and response bodies, but the observable semantics are:
+
+- `PUT` creates or reconfirms by normalized schedule config;
+- `GET` reads durable schedule status;
+- `DELETE` cancels only pending schedules; and
+- fire uses the normal append implementation, including content type checks,
+  producer deduplication, stream closure, and subscription wake hooks.
+
+The client must not own the scheduler. It should not run local timers to emulate
+durable scheduled append.
+
+## Webhooks and JWKS
+
+Webhook helpers belong at the handler boundary. They should verify the
+`Webhook-Signature` header against the exact raw request body, select keys by
+`kid` from the server JWKS, cache JWKS responses according to HTTP cache
+metadata, and reject timestamps outside the configured replay window.
+
+Verification should produce a typed wake value only after signature and replay
+checks pass. Application code should not need to reimplement JWKS lookup or raw
+body signature handling for each webhook handler.
 
 ## Non-goals
 
 The first coordination slice must not introduce:
 
-- a subscription service abstraction;
-- a filtered-subscription service abstraction;
-- a schedule service abstraction;
-- a coordination helper service;
-- pull-wake claim orchestration;
-- worker pooling;
-- heartbeat policy;
-- handler lifecycle policy;
+- a durable execution layer;
+- a worker pool;
+- a handler lifecycle manager;
 - local CEL evaluation;
 - a scheduler;
 - a predicate index;
-- a dedupe store; or
+- a dedupe store;
+- retry loops around claim processing;
+- product-specific authentication policy; or
 - durable wait, durable sleep, child, spawn, join, or attachment helpers.
 
 Those behaviors belong either in the server protocol implementation or in a
-higher layer after the protocol endpoints are implemented and covered by
+higher layer after the protocol endpoints and Effect bindings are covered by
 conformance tests.
-
-## Naming
-
-This document does not choose public API names. Names should be selected during
-implementation by following existing `effect-durable-streams` module style and
-by staying close to the HTTP contract in `PROTOCOL.md`.

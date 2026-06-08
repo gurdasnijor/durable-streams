@@ -251,15 +251,20 @@ lower to stream creation, append, subscription, ack, and release.
 ## Effect Client Boundary
 
 `effect-durable-streams` is a protocol binding package, not a durable execution
-runtime. The first coordination slice must expose only typed bindings for the
-reserved HTTP endpoints defined in `PROTOCOL.md`.
+runtime. The first coordination slice must expose typed Effect bindings that
+preserve the semantics of the reserved HTTP protocol defined in `PROTOCOL.md`.
+That means mapping log reads to `Stream`, writes and control operations to
+`Effect`, producer identity to scoped fenced resources, pull-wake claims to
+scoped leases, schedule creation to delayed producer-fenced append, and webhook
+delivery to handler-side verification over raw request bytes.
 
 The design note for this boundary lives in
 `packages/effect-durable-streams/docs/reserved-protocol-bindings.md`.
 
 The SDD intentionally does not choose public API names. Naming must be decided
 during implementation by following the existing `effect-durable-streams` module
-style and by staying close to the HTTP contract in `PROTOCOL.md`.
+style and by naming the operation invariant, not by copying endpoint rows into a
+CRUD-shaped surface.
 
 The first slice must not add service abstractions, claim orchestration, worker
 orchestration, local CEL evaluation, heartbeat policy, handler lifecycle policy,
@@ -303,10 +308,10 @@ worker-loop or durable-execution policy.
 
 1. Canonicalize `__ds/subscriptions` as the target API for new work.
 2. Implement filtered subscriptions in server and server conformance tests.
-3. Expose typed bindings for the filtered subscription HTTP contract in
+3. Expose typed Effect bindings for filtered subscription semantics in
    `effect-durable-streams` and add Effect client conformance.
 4. Implement scheduled append in server and server conformance tests.
-5. Expose typed bindings for the schedule HTTP contract in
+5. Expose typed Effect bindings for scheduled append semantics in
    `effect-durable-streams` and add Effect client conformance.
 6. Lower `effect-durable-execution` wait/sleep helpers onto those client
    capabilities.
