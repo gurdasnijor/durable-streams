@@ -236,6 +236,45 @@ should lower to:
 Any helper added to `effect-durable-streams` or `effect-durable-execution` must
 lower to stream creation, append, subscription, ack, and release.
 
+## Effect Client API Altitude
+
+`effect-durable-streams` is a protocol adapter, not a durable execution runtime.
+The first-slice API must mirror the wire contract closely and defer worker
+policy to higher layers.
+
+Expected first-slice shape:
+
+```ts
+Subscription.put(...)
+Subscription.get(...)
+Subscription.delete(...)
+Subscription.claim(...)
+Subscription.ack(...)
+Subscription.release(...)
+
+Schedule.put(...)
+Schedule.get(...)
+Schedule.delete(...)
+```
+
+These functions should:
+
+- accept stream root or endpoint, id, and protocol request bodies;
+- return decoded protocol response bodies;
+- map protocol errors into typed Effect errors;
+- preserve `HttpClient` and endpoint policy plumbing;
+- never import `packages/server`;
+- never evaluate CEL locally;
+- never own heartbeat policy, handler lifecycle, worker pooling, or retry loops;
+  and
+- never add a scheduler, predicate index, or dedupe store.
+
+Higher-order helpers such as claim loops, durable wait, durable sleep, child
+execution, and worker orchestration are not first-slice
+`effect-durable-streams` APIs. They can be considered later in
+`effect-durable-execution`, a worker helper package, or deployment bindings once
+the substrate endpoint shapes have proven stable.
+
 ## Conformance Plan
 
 ### Server Conformance
@@ -254,11 +293,12 @@ Add accepted client coverage in
 
 - `filtered-subscription.conformance.test.ts`
 - `scheduled-append.conformance.test.ts`
-- `subscription-claim-loop.conformance.test.ts`
-- `coordination-helpers.conformance.test.ts`
+- `subscription-protocol.conformance.test.ts`
+- `schedule-protocol.conformance.test.ts`
 
 These tests prove the public Effect client API drives a real server correctly.
-They should not duplicate every server edge case.
+They should not duplicate every server edge case, and they should not validate
+worker-loop or durable-execution policy.
 
 ### Durable Execution Package Tests
 
@@ -273,11 +313,11 @@ They should not duplicate every server edge case.
 
 1. Canonicalize `__ds/subscriptions` as the target API for new work.
 2. Implement filtered subscriptions in server and server conformance tests.
-3. Expose filtered subscriptions in `effect-durable-streams` and add Effect
-   client conformance.
+3. Expose filtered subscription protocol wrappers in `effect-durable-streams`
+   and add Effect client conformance.
 4. Implement scheduled append in server and server conformance tests.
-5. Expose scheduled append in `effect-durable-streams` and add Effect client
-   conformance.
+5. Expose schedule protocol wrappers in `effect-durable-streams` and add Effect
+   client conformance.
 6. Lower `effect-durable-execution` wait/sleep helpers onto those client
    capabilities.
 
