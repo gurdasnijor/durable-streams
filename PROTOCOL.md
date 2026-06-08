@@ -43,6 +43,7 @@ Copyright (c) 2025 ElectricSQL
    - 7.1. [Webhook Delivery and Callback](#71-webhook-delivery-and-callback)
    - 7.2. [Pull-wake Claim, Ack, and Release](#72-pull-wake-claim-ack-and-release)
    - 7.3. [Generation Fencing and Leases](#73-generation-fencing-and-leases)
+   - 7.4. [Coordination Substrate Extensions (Draft)](#74-coordination-substrate-extensions-draft)
 8. [Offsets](#8-offsets)
 9. [Content Types](#9-content-types)
 10. [Caching and Collapsing](#10-caching-and-collapsing)
@@ -855,6 +856,10 @@ Content-Type: application/json
   "streams": ["events/manual-a", "events/manual-b"],
   "webhook": { "url": "https://worker.example/hooks" },
   "wake_stream": "wake/pool",
+  "filter": {
+    "language": "cel",
+    "expression": "event.type == 'ready'"
+  },
   "lease_ttl_ms": 30000,
   "description": "event processor"
 }
@@ -869,6 +874,7 @@ Fields:
 | `streams`      | No                      | Explicit stream-root-relative stream paths, additive to `pattern` |
 | `webhook.url`  | For `type: "webhook"`   | URL that receives wake notifications                              |
 | `wake_stream`  | For `type: "pull-wake"` | Stream-root-relative durable stream path used as the wake channel |
+| `filter`       | No                      | Optional wake filter; see Section 7.4.1                           |
 | `lease_ttl_ms` | No                      | Lease duration, from 1 second to 10 minutes. Default: 30 seconds  |
 | `description`  | No                      | Human-readable description                                        |
 
@@ -882,7 +888,7 @@ Responses:
 | 200    | Existing subscription re-confirmed with an identical configuration. |
 | 409    | Subscription exists with the same ID but a different configuration. |
 
-Servers MUST hash the normalized subscription configuration and compare that hash for idempotent re-confirmation. The hash includes `type`, `pattern`, normalized `streams[]`, delivery configuration, `lease_ttl_ms`, and `description`.
+Servers MUST hash the normalized subscription configuration and compare that hash for idempotent re-confirmation. The hash includes `type`, `pattern`, normalized `streams[]`, delivery configuration, `filter`, `lease_ttl_ms`, and `description`.
 
 Webhook deliveries are signed by the server using an asymmetric webhook signing key. Webhook subscription responses MUST NOT include shared webhook signing secrets. Webhook public key discovery is described in Section 6.5.
 
@@ -917,6 +923,10 @@ Response:
   ],
   "webhook": { "url": "https://worker.example/hooks" },
   "wake_stream": null,
+  "filter": {
+    "language": "cel",
+    "expression": "event.type == 'ready'"
+  },
   "lease_ttl_ms": 30000,
   "created_at": "2026-05-09T00:00:00.000Z",
   "status": "active",
@@ -1180,6 +1190,169 @@ If pending work remains after release, the server MUST write another wake event 
 - Request `wake_id` matches the current wake.
 
 `lease_ttl_ms` bounds worker liveness. For webhook delivery, the lease starts when a wake is issued and is extended by valid callbacks. For pull-wake, the lease starts when a worker successfully claims and is extended by valid ack calls without `done: true`. When a lease expires, the server MUST clear the holder and wake token; if pending work remains, it MUST schedule another wake.
+
+### 7.4. Coordination Substrate Extensions (Draft)
+
+This section defines draft, product-neutral coordination extensions that sit on
+top of streams, producer fencing, and subscriptions. A server MUST NOT advertise
+support for a draft extension until the corresponding conformance tests in
+`packages/server-conformance-tests` pass. Clients MUST treat these extensions as
+optional unless capability discovery or deployment configuration says they are
+enabled.
+
+The intent is to keep durable scheduling, predicate wake-up, and commit-once
+append behavior in Durable Streams rather than in each workflow or application
+runtime that consumes it.
+
+#### 7.4.1. Filtered Subscriptions
+
+Subscriptions MAY include a wake filter. A wake filter controls when a
+subscription becomes pending; it does not change the bytes returned by normal
+stream reads.
+
+```json
+{
+  "type": "pull-wake",
+  "pattern": "events/*",
+  "wake_stream": "wake/pool",
+  "filter": {
+    "language": "cel",
+    "expression": "event.type == 'github.pr.merged' && event.repo == self.repo",
+    "self": { "repo": "gurdasnijor/fluent-firegrid" }
+  }
+}
+```
+
+Fields:
+
+| Field               | Required | Description                                                                 |
+| ------------------- | -------- | --------------------------------------------------------------------------- |
+| `filter.language`   | Yes      | Filter language. The initial portable language is `cel`.                    |
+| `filter.expression` | Yes      | Boolean expression evaluated per appended event.                            |
+| `filter.self`       | No       | Immutable JSON object provided as additional expression context.             |
+
+Filters are part of the normalized subscription configuration hash. Reconfirming
+a subscription with a different filter MUST return `409 Conflict`.
+
+Filter evaluation context:
+
+| Name     | Description                                                |
+| -------- | ---------------------------------------------------------- |
+| `event`  | The decoded JSON stream item being evaluated.              |
+| `stream` | Stream-root-relative path of the stream that received data. |
+| `offset` | Offset of the evaluated item.                              |
+| `self`   | The immutable `filter.self` object, or `{}` if omitted.     |
+
+The initial filter contract applies to streams with `application/json` content.
+Servers MUST reject a filtered subscription that targets a stream whose content
+type cannot be evaluated, unless the stream does not yet exist. If a future
+matching stream has an incompatible content type, the server MUST treat the
+append as a non-match and SHOULD expose an operator-visible diagnostic.
+
+Filtered subscriptions keep two cursors internally:
+
+- the public `acked_offset`, advanced only by callback or pull-wake ack; and
+- an internal evaluated offset, advanced by the server as it tests events.
+
+Non-matching events MUST NOT wake the subscription, but they MAY advance the
+internal evaluated offset so the server does not re-scan the same non-matching
+events forever. A matching event after any number of non-matches MUST create the
+same wake shape as an unfiltered subscription. The wake snapshot's
+`tail_offset` MUST be at least the matching event's offset.
+
+#### 7.4.2. Scheduled Append
+
+Servers MAY expose durable scheduled append under the reserved control prefix:
+
+```http
+PUT {stream-url}/__ds/schedules/:id
+Content-Type: application/json
+
+{
+  "at": "2026-05-09T12:00:00.000Z",
+  "stream": "sessions/abc",
+  "content_type": "application/json",
+  "body": { "type": "timer.fired", "timer_id": "t-1" },
+  "producer": {
+    "id": "timer:t-1",
+    "epoch": 0,
+    "seq": 0
+  }
+}
+```
+
+Fields:
+
+| Field          | Required | Description                                                                    |
+| -------------- | -------- | ------------------------------------------------------------------------------ |
+| `at`           | Yes      | RFC3339 timestamp. The append MUST NOT occur before this instant.              |
+| `stream`       | Yes      | Stream-root-relative target stream path.                                       |
+| `content_type` | Yes      | Content type used for the scheduled append.                                    |
+| `body`         | Yes      | JSON value to append when `content_type` is `application/json`.                |
+| `body_base64`  | No       | Base64url bytes for non-JSON scheduled appends. Mutually exclusive with `body`. |
+| `producer`     | No       | Producer fencing tuple applied to the eventual append.                         |
+| `close`        | No       | If `true`, the scheduled append also closes the target stream.                 |
+
+Creating a schedule is idempotent by `:id`. A second `PUT` with the same
+normalized schedule MUST return `200 OK`. A second `PUT` with a different
+configuration MUST return `409 Conflict`.
+
+The scheduled fire path MUST use the same append implementation as a normal
+client append, including content-type checks, stream closure checks, producer
+deduplication, `Stream-Seq` validation when applicable, and subscription wake
+hooks. If the append is rejected, the schedule MUST transition to `failed` with
+the underlying protocol error recorded.
+
+```http
+GET {stream-url}/__ds/schedules/:id
+
+→ 200 OK
+{
+  "id": "t-1",
+  "status": "pending",
+  "at": "2026-05-09T12:00:00.000Z",
+  "stream": "sessions/abc"
+}
+```
+
+Schedule status is one of `pending`, `fired`, `cancelled`, or `failed`.
+Schedules MUST survive process restart and Durable Object eviction. Firing MAY
+be late, but MUST NOT be early.
+
+```http
+DELETE {stream-url}/__ds/schedules/:id
+
+→ 204 No Content
+```
+
+Deleting a `pending` schedule cancels it. Deleting a `cancelled` schedule is
+idempotent. Deleting a `fired` or `failed` schedule MUST NOT undo the target
+stream append.
+
+#### 7.4.3. Commit-once Append
+
+The protocol's producer tuple remains the commit-once primitive. Higher layers
+SHOULD model idempotency keys as `(stream, Producer-Id, Producer-Epoch,
+Producer-Seq)` instead of adding a second runtime-owned deduplication table.
+
+Coordination extensions that append on behalf of a caller, including scheduled
+append, SHOULD accept the same producer tuple and MUST apply the Section 5.2.1
+deduplication rules at the final append point. This guarantees that a retry of
+a scheduler, webhook receiver, or application ingress can be expressed as the
+same durable stream append rather than a runtime-specific "already handled"
+side table.
+
+#### 7.4.4. Child and Attachment Composition
+
+No additional protocol is required for child execution or attachment. A child is
+a normal stream, the parent appends an invocation fact with a producer tuple,
+and the parent registers a subscription or filtered subscription for the child
+stream's terminal fact. Progress attachment is the same pattern over non-terminal
+child facts.
+
+Implementations MAY provide client helpers for this composition, but those
+helpers MUST lower to ordinary stream creation, append, subscription, ack, and
+release operations.
 
 ## 8. Offsets
 
