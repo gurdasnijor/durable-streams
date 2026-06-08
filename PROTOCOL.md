@@ -1218,7 +1218,7 @@ stream reads.
   "filter": {
     "language": "cel",
     "expression": "event.type == 'github.pr.merged' && event.repo == self.repo",
-    "self": { "repo": "gurdasnijor/fluent-firegrid" }
+    "self": { "repo": "example/repository" }
   }
 }
 ```

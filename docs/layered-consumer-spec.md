@@ -831,7 +831,7 @@ serverless workers.
 
 ### Ownership Boundary
 
-| Capability                  | Durable Streams owns                                                     | Application/fluent layer owns                                      |
+| Capability                  | Durable Streams owns                                                     | Application layer owns                                             |
 | --------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
 | Durable wait / predicate    | Filter persistence, event evaluation, wake generation, cursor safety      | Predicate authoring, domain schemas, action to run after wake      |
 | Durable sleep / timer       | Schedule durability, no-early fire, append on fire, cancellation         | Choosing timer IDs, interpreting the timer fact                    |
@@ -905,15 +905,15 @@ Attachment is the same model over progress facts instead of terminal facts.
 Durable Streams does not need to know what a "child workflow" is; it needs only
 stream creation, producer-fenced append, subscriptions, and optional filters.
 
-### Fluent-firegrid Surfacing
+### Higher-level Runtime Surfacing
 
-`@firegrid/fluent-firegrid` should expose application authoring primitives such
-as named steps, sleep, wait, spawn, and attach. It should not expose Durable
-Streams control endpoints or own substrate indexes.
+A higher-level durable execution or application authoring library should expose
+domain primitives such as named steps, sleep, wait, spawn, and attach. It should
+not expose Durable Streams control endpoints or own substrate indexes.
 
 The expected consumption shape is:
 
-- fluent-firegrid accepts an injected Effect service backed by
+- the higher-level library accepts an injected client service backed by
   `effect-durable-streams`;
 - named steps lower to producer-fenced appends and replay from the session
   stream;
@@ -923,8 +923,8 @@ The expected consumption shape is:
 - spawn/attach lower to ordinary child streams plus filtered subscriptions for
   progress or terminal facts.
 
-This keeps fluent-firegrid thin: it defines the authoring API and domain event
-schemas, while Durable Streams owns the durable coordination mechanics.
+This keeps higher-level libraries thin: they define authoring APIs and domain
+event schemas, while Durable Streams owns the durable coordination mechanics.
 
 ---
 

@@ -331,25 +331,25 @@ const executeWithRetry = (
       const res = yield* client.execute(shape(url, headers)).pipe(
         Effect.tapError(error =>
           emitSpanEvent("retry.attempt", {
-            "firegrid.retry.attempt": attemptNumber,
-            "firegrid.retry.error": retryErrorTag(error),
+            "durable_streams.retry.attempt": attemptNumber,
+            "durable_streams.retry.error": retryErrorTag(error),
           })),
       )
       if (!isRetryableStatus(res.status)) {
         yield* emitSpanEvent("retry.attempt", {
-          "firegrid.retry.attempt": attemptNumber,
-          "firegrid.retry.http_status": res.status,
-          "firegrid.retry.retryable": false,
+          "durable_streams.retry.attempt": attemptNumber,
+          "durable_streams.retry.http_status": res.status,
+          "durable_streams.retry.retryable": false,
         })
         return res
       }
       const nowMs = yield* Clock.currentTimeMillis
       const retryAfterMs = parseRetryAfter(headerValue(res, "retry-after"), nowMs)
       yield* emitSpanEvent("retry.attempt", {
-        "firegrid.retry.attempt": attemptNumber,
-        "firegrid.retry.http_status": res.status,
-        "firegrid.retry.retryable": true,
-        ...(retryAfterMs === undefined ? {} : { "firegrid.retry.retry_after_ms": retryAfterMs }),
+        "durable_streams.retry.attempt": attemptNumber,
+        "durable_streams.retry.http_status": res.status,
+        "durable_streams.retry.retryable": true,
+        ...(retryAfterMs === undefined ? {} : { "durable_streams.retry.retry_after_ms": retryAfterMs }),
       })
       // The schedule's own delay still runs on top of `Retry-After`. In
       // the common case the schedule's per-step delay (≤ 3s) is small
@@ -371,7 +371,7 @@ const executeWithRetry = (
         Effect.succeed(e.response),
       ),
       Effect.mapError((e) => new TransportError({ cause: e })),
-      Effect.withSpan("firegrid.durable_streams.http.request", {
+      Effect.withSpan("durable_streams.http.request", {
         kind: "client",
       }),
     )

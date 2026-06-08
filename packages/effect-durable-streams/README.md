@@ -3,11 +3,10 @@
 Low-level Effect adapter for the
 [Durable Streams Protocol](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md).
 
-Most Firegrid state should use
-[`effect-durable-operators` `DurableTable`](../effect-durable-operators/README.md)
-instead. Use this package only when you intentionally need raw retained stream
-semantics, such as an append-only fact stream or a generic producer-fenced
-append path.
+Use this package when you intentionally need raw retained stream semantics, such
+as an append-only fact stream or a generic producer-fenced append path. Higher
+level table, projection, or query state should use a purpose-built abstraction
+instead of raw streams.
 
 ## Public API
 
@@ -123,8 +122,8 @@ The two are **intentional siblings**, both thin delegations over the same
   `params`, `onError` (auth-refresh / signed-URL renewal), `onErrorMaxRetries`,
   and `retrySchedule` flow through every operation; `HttpClient` threads
   through `R` (provide once at the edge). Use this inside reusable
-  services/runtime layers — it's what `fluent-runtime` and `fluent-firegrid`
-  use, because they accept a caller-supplied `Endpoint` with its policy.
+  services/runtime layers, because they can accept a caller-supplied `Endpoint`
+  with its policy.
 - **`DurableStreamClient` — the optional app / edge facade.** URL-keyed,
   optional schema, batteries-included layer, `HttpClient` captured in the
   layer. Best for scripts, examples, simple/untyped clients, and raw-stream
@@ -142,7 +141,7 @@ Planned service split:
 
 | Service                         | Protocol coverage                                      | Intended caller                                      |
 | ------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| `DurableSubscriptionClient`      | Reserved subscription create/read/delete, claim/ack/release | Workers, webhook receivers, fluent substrate adapter |
+| `DurableSubscriptionClient`      | Reserved subscription create/read/delete, claim/ack/release | Workers, webhook receivers, runtime adapters         |
 | `DurableFilteredSubscription`    | Filtered subscription registration and wake metadata   | Durable wait and event choreography                  |
 | `DurableScheduleClient`          | Scheduled append create/read/cancel                    | Durable sleep, timeout races, delayed redrive        |
 | `DurableCoordination` helpers    | Commit-once append and child stream composition        | Thin higher-level authoring libraries                |
@@ -151,24 +150,25 @@ These helpers should still be thin Effect wrappers around protocol calls. They
 must not import `packages/server` internals and must not own a second scheduler,
 predicate index, or deduplication store.
 
-### Expected fluent-firegrid Use
+### Expected Higher-level Runtime Use
 
-`@firegrid/fluent-firegrid` should consume these helpers through injected Effect
-services:
+A higher-level durable execution library should consume these helpers through
+injected Effect services:
 
 - named `run` steps use producer-fenced appends and replay from the session
   stream;
 - `sleep` uses `DurableScheduleClient` to append a timer fact in the future,
   then waits through a filtered or pull-wake subscription;
 - `wait`/`awaitEvent` uses `DurableFilteredSubscription` instead of keeping a
-  fluent-owned predicate registry;
+  runtime-owned predicate registry;
 - `spawn`/`attach` uses ordinary child streams plus filtered subscriptions for
   progress or terminal facts; and
 - external ingress uses stable producer tuples so duplicate deliveries collapse
   at the Durable Streams append boundary.
 
-That means fluent-firegrid keeps the authoring API and schemas, while Durable
-Streams owns durable wake, timer, cursor, lease, and producer-fencing mechanics.
+That means the higher-level library keeps the authoring API and schemas, while
+Durable Streams owns durable wake, timer, cursor, lease, and producer-fencing
+mechanics.
 
 ## When Not To Use This Package
 
