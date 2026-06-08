@@ -19,7 +19,13 @@ machinery above Durable Streams.
 - Filtered subscriptions use the CEL library already used in this codebase.
 - This is greenfield. There is no compatibility-preservation requirement for
   older `/consumers` routes.
-- Canonical coordination APIs live under the reserved `__ds` namespace.
+- `PROTOCOL.md` is the source of truth. Spike implementation code can inform
+  migration mechanics, but it does not define protocol semantics.
+- Canonical coordination APIs live under the reserved `__ds` namespace. Older
+  `/consumers` docs and public routes should be removed rather than preserved
+  as an alternate API.
+- Authentication and authorization are deployment and operational concerns, not
+  first-slice substrate semantics.
 - Server behavior conformance lives in `packages/server-conformance-tests`.
 - Effect client conformance lives in
   `packages/effect-durable-streams/test/conformance`.
@@ -39,9 +45,15 @@ The implementation should converge on:
 {stream-root}/__ds/schedules/:id
 ```
 
-Do not expand `/consumers` for this work. If existing code paths need to be
-deleted or rewritten to make `__ds/subscriptions` canonical, do that as part of
-the implementation plan instead of preserving both shapes.
+Do not expand `/consumers` for this work. Existing `/consumers` spike paths are
+not compatibility targets; delete or rewrite them behind `__ds/subscriptions`
+instead of preserving both shapes.
+
+Until filtered subscriptions are implemented, servers must reject subscription
+requests containing `filter`. Silently accepting the field as an unfiltered
+subscription violates the protocol target because callers would believe a
+server-side durable predicate is active when it is not. Rejection must not leave
+subscription state behind.
 
 ## Filtered Subscriptions
 
@@ -236,44 +248,27 @@ should lower to:
 Any helper added to `effect-durable-streams` or `effect-durable-execution` must
 lower to stream creation, append, subscription, ack, and release.
 
-## Effect Client API Altitude
+## Effect Client Boundary
 
-`effect-durable-streams` is a protocol adapter, not a durable execution runtime.
-The first-slice API must mirror the wire contract closely and defer worker
-policy to higher layers.
+`effect-durable-streams` is a protocol binding package, not a durable execution
+runtime. The first coordination slice must expose typed Effect bindings that
+preserve the semantics of the reserved HTTP protocol defined in `PROTOCOL.md`.
+That means mapping log reads to `Stream`, writes and control operations to
+`Effect`, producer identity to scoped fenced resources, pull-wake claims to
+scoped leases, schedule creation to delayed producer-fenced append, and webhook
+delivery to handler-side verification over raw request bytes.
 
-Expected first-slice shape:
+The design note for this boundary lives in
+`packages/effect-durable-streams/docs/reserved-protocol-bindings.md`.
 
-```ts
-Subscription.put(...)
-Subscription.get(...)
-Subscription.delete(...)
-Subscription.claim(...)
-Subscription.ack(...)
-Subscription.release(...)
+The SDD intentionally does not choose public API names. Naming must be decided
+during implementation by following the existing `effect-durable-streams` module
+style and by naming the operation invariant, not by copying endpoint rows into a
+CRUD-shaped surface.
 
-Schedule.put(...)
-Schedule.get(...)
-Schedule.delete(...)
-```
-
-These functions should:
-
-- accept stream root or endpoint, id, and protocol request bodies;
-- return decoded protocol response bodies;
-- map protocol errors into typed Effect errors;
-- preserve `HttpClient` and endpoint policy plumbing;
-- never import `packages/server`;
-- never evaluate CEL locally;
-- never own heartbeat policy, handler lifecycle, worker pooling, or retry loops;
-  and
-- never add a scheduler, predicate index, or dedupe store.
-
-Higher-order helpers such as claim loops, durable wait, durable sleep, child
-execution, and worker orchestration are not first-slice
-`effect-durable-streams` APIs. They can be considered later in
-`effect-durable-execution`, a worker helper package, or deployment bindings once
-the substrate endpoint shapes have proven stable.
+The first slice must not add service abstractions, claim orchestration, worker
+orchestration, local CEL evaluation, heartbeat policy, handler lifecycle policy,
+worker pooling, a scheduler, a predicate index, or a dedupe store.
 
 ## Conformance Plan
 
@@ -313,11 +308,11 @@ worker-loop or durable-execution policy.
 
 1. Canonicalize `__ds/subscriptions` as the target API for new work.
 2. Implement filtered subscriptions in server and server conformance tests.
-3. Expose filtered subscription protocol wrappers in `effect-durable-streams`
-   and add Effect client conformance.
+3. Expose typed Effect bindings for filtered subscription semantics in
+   `effect-durable-streams` and add Effect client conformance.
 4. Implement scheduled append in server and server conformance tests.
-5. Expose schedule protocol wrappers in `effect-durable-streams` and add Effect
-   client conformance.
+5. Expose typed Effect bindings for scheduled append semantics in
+   `effect-durable-streams` and add Effect client conformance.
 6. Lower `effect-durable-execution` wait/sleep helpers onto those client
    capabilities.
 

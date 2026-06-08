@@ -35,14 +35,16 @@ Prefer a service-shaped, URL-keyed surface with optional schema? See
 need to distinguish a newly accepted append from an idempotent duplicate:
 
 ```ts
-const result = yield* DurableStream.appendWithProducer({
-  endpoint,
-  schema: Message,
-  event: { user: "alice", text: "hello" },
-  producerId: "message-123",
-  producerEpoch: 0,
-  producerSeq: 0,
-})
+const result =
+  yield *
+  DurableStream.appendWithProducer({
+    endpoint,
+    schema: Message,
+    event: { user: "alice", text: "hello" },
+    producerId: "message-123",
+    producerEpoch: 0,
+    producerSeq: 0,
+  })
 ```
 
 ## Example
@@ -65,7 +67,7 @@ const write = messages.append({ user: "alice", text: "hello" })
 
 const readLive = messages.read({ live: "sse" }).pipe(
   Stream.tap((message) => Effect.log(`${message.user}: ${message.text}`)),
-  Stream.runDrain,
+  Stream.runDrain
 )
 ```
 
@@ -73,7 +75,7 @@ const readLive = messages.read({ live: "sse" }).pipe(
 
 For an ergonomic, service-shaped surface — provide one batteries-included
 layer, then call methods by URL — use `DurableStreamClient`. Schema is
-*optional*: raw ops skip it for quick use; `withSchema(schema)` gives the fully
+_optional_: raw ops skip it for quick use; `withSchema(schema)` gives the fully
 typed `Stream<A>` / `Sink<A>` surface over the same core (same transport, same
 typed errors, same real follow loop).
 
@@ -99,12 +101,12 @@ const program = Effect.gen(function* () {
   yield* chat.append(url, { user: "bob", text: "yo" })
   yield* chat.read(url, { live: "sse" }).pipe(
     Stream.tap((m) => Effect.log(`${m.user}: ${m.text}`)),
-    Stream.runDrain,
+    Stream.runDrain
   )
 })
 
 Effect.runPromise(
-  program.pipe(Effect.scoped, Effect.provide(DurableStreamClientLayerFetch)),
+  program.pipe(Effect.scoped, Effect.provide(DurableStreamClientLayerFetch))
 )
 ```
 
@@ -130,11 +132,15 @@ The two are **intentional siblings**, both thin delegations over the same
   tooling. It takes a `url` + per-call headers, **not** a full `Endpoint`, so
   for endpoints that need `onError`/`retrySchedule` policy, prefer `define`.
 
-## Proposed Coordination Client Surface
+## Reserved coordination endpoints
 
-The current public API covers L0 streams and producer-fenced append. A proposed
-client surface for subscription, scheduling, and coordination helpers is tracked
-in [docs/coordination-substrate-client.md](docs/coordination-substrate-client.md).
+The current public API covers L0 streams and producer-fenced append. Reserved
+coordination bindings must preserve the protocol semantics in `PROTOCOL.md`:
+subscription claims are scoped leases, producer identities are scoped fenced
+resources, schedules are delayed producer-fenced appends, and webhook handlers
+verify JWKS-backed signatures before exposing wake payloads. The boundary is
+constrained by
+[docs/reserved-protocol-bindings.md](docs/reserved-protocol-bindings.md).
 
 ## When Not To Use This Package
 
