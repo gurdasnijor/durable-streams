@@ -162,9 +162,7 @@ export interface DurableStreamHandle<A> extends ReadonlyDurableStreamHandle<A> {
  * Legacy typed, URL-keyed surface returned by
  * {@link DurableStreamClientService.withSchema}.
  *
- * @deprecated Prefer `client.stream(path, schema)` or
- * ordinary `Effect.Service` wrappers around it so schemas are bound to
- * concrete stream paths.
+ * @deprecated Prefer `client.stream(path, schema)`.
  */
 export interface TypedClient<A> {
   readonly append: (
@@ -249,9 +247,7 @@ export interface DurableStreamClientService {
   /**
    * Bind a Schema to get the legacy typed URL-keyed surface.
    *
-   * @deprecated Prefer `client.stream(path, schema)` or
-   * ordinary `Effect.Service` wrappers around it so typed handles are
-   * path-bound.
+   * @deprecated Prefer `client.stream(path, schema)`.
    */
   readonly withSchema: <A, I>(
     schema: Schema.Schema<A, I, never>

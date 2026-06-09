@@ -114,7 +114,9 @@ Effect.runPromise(
 metadata; producers add `close` / `pendingCount` / `epoch` / `nextSeq`.
 
 For fixed singleton streams, wrap that projection with ordinary
-`Effect.Service` application code:
+`Effect.Service` application code. Keep the `DurableStreamClient` layer at the
+app root; the stream service depends on the bare tag and supplies runtime
+address data such as base URL and headers when it creates the handle.
 
 ```ts
 import {
@@ -122,7 +124,7 @@ import {
   DurableStreamClientLayerFetch,
   ReadFrom,
 } from "effect-durable-client"
-import { Effect, Schema, Stream } from "effect"
+import { Config, Effect, Redacted, Schema, Stream } from "effect"
 
 const Message = Schema.Struct({
   user: Schema.String,
@@ -130,11 +132,16 @@ const Message = Schema.Struct({
 })
 
 class ChatMessages extends Effect.Service<ChatMessages>()("ChatMessages", {
-  scoped: Effect.gen(function* () {
+  effect: Effect.gen(function* () {
     const client = yield* DurableStreamClient
-    return client.stream("chat.room-1", Message)
+    const streamRoot = yield* Config.string("DURABLE_STREAMS_URL")
+    const token = yield* Config.redacted("DURABLE_STREAMS_TOKEN")
+    return client.stream(
+      new URL("chat.room-1", streamRoot).toString(),
+      Message,
+      { headers: { authorization: () => `Bearer ${Redacted.value(token)}` } }
+    )
   }),
-  dependencies: [DurableStreamClientLayerFetch],
 }) {}
 
 const program = Effect.gen(function* () {
@@ -144,7 +151,10 @@ const program = Effect.gen(function* () {
   return yield* chat
     .read({ from: ReadFrom.beginning, until: "tail" })
     .pipe(Stream.runCollect)
-}).pipe(Effect.provide(ChatMessages.Default))
+}).pipe(
+  Effect.provide(ChatMessages.Default),
+  Effect.provide(DurableStreamClientLayerFetch)
+)
 ```
 
 `client.withSchema(schema)` remains as a legacy URL-keyed compatibility helper
