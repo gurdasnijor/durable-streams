@@ -129,3 +129,8 @@ constraints:
       2: "The Effect server may reuse protocol fixtures, schemas, and conformance tests from existing packages."
       3: "Authentication and authorization remain deployment policy unless a conformance requirement explicitly covers them."
       4: "Source or API compatibility with `packages/server` is a non-goal."
+  TOOLING:
+    requirements:
+      1: "Repository linting rejects hand-written protocol numeric parsing in `effect-durable-streams` source so protocol/header decode paths use Effect Schema or shared protocol schemas."
+      2: "The Effect server package composes its TypeScript config from the repository root strict Effect language-service settings and exposes diagnostics scripts for the strict Effect diagnostics gate."
+      3: "`effect-durable-streams` file names match exported abstractions: `Server.ts` exports server construction or layers, while route composition exports live in router-named modules."

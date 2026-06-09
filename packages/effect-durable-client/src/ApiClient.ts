@@ -6,7 +6,7 @@ import {
   ProtocolError,
   Fenced as ProtocolFenced,
 } from "durable-streams-protocol/Api"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import {
   AlreadyClaimed,
   ConfigConflict,
@@ -27,19 +27,19 @@ export type ControlClient = Effect.Effect.Success<
 export const lowerControlError = (
   error: unknown
 ): ConfigConflict | AlreadyClaimed | Fenced | TransportError => {
-  if (error instanceof ProtocolConfigConflict) {
+  if (Schema.is(ProtocolConfigConflict)(error)) {
     return new ConfigConflict({ reason: error.message })
   }
-  if (error instanceof ProtocolAlreadyClaimed) {
+  if (Schema.is(ProtocolAlreadyClaimed)(error)) {
     return new AlreadyClaimed({
       currentHolder: error.current_holder,
       generation: error.generation,
     })
   }
-  if (error instanceof ProtocolFenced) {
+  if (Schema.is(ProtocolFenced)(error)) {
     return new Fenced({ generation: error.generation })
   }
-  if (error instanceof ProtocolError) {
+  if (Schema.is(ProtocolError)(error)) {
     return new TransportError({
       cause: new Error(error.message),
     })

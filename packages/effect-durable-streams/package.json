@@ -26,6 +26,9 @@
   "scripts": {
     "build": "tsc",
     "check": "pnpm run typecheck && pnpm run test",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.diagnostics.json --strict",
+    "lint": "eslint .",
+    "overview": "effect-language-service overview --project tsconfig.json",
     "test": "vitest run --root ../.. --project effect-durable-streams",
     "typecheck": "tsc --noEmit"
   },

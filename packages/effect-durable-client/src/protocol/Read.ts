@@ -155,11 +155,10 @@ const sseLoop = (
 const resolveStart = (
   _live: LiveMode | undefined,
   offset: Offset | undefined
-): Offset => {
+): Offset =>
   // Default is always BEGIN — caller gets "catch up from start, then tail live".
   // To tail from current end only, pass `offset: "now" as Offset`.
-  return offset ?? BEGIN
-}
+  offset ?? BEGIN
 
 export const readStream = <A, I>(
   opts: ReadOpts<A, I>

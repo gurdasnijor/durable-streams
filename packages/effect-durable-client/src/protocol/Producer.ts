@@ -102,7 +102,7 @@ const sendBatch = <A, I>(
           // Stale epoch / zombie-fenced. Per §5.2.1 the server returns its
           // current epoch in the `Producer-Epoch` response header — jump
           // straight past it so autoClaim converges in O(1) round-trips.
-          if (opts.autoClaim && autoClaimsSoFar < maxAutoClaim) {
+          if (opts.autoClaim === true && autoClaimsSoFar < maxAutoClaim) {
             const serverEpoch = res.producerEpoch ?? current.epoch
             const bumped: ProducerState = {
               epoch: serverEpoch + 1,
