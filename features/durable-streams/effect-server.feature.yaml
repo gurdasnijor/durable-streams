@@ -129,3 +129,6 @@ constraints:
       2: "The Effect server may reuse protocol fixtures, schemas, and conformance tests from existing packages."
       3: "Authentication and authorization remain deployment policy unless a conformance requirement explicitly covers them."
       4: "Source or API compatibility with `packages/server` is a non-goal."
+  TOOLING:
+    requirements:
+      1: "Repository linting rejects hand-written protocol numeric parsing in `effect-durable-streams` source so protocol/header decode paths use Effect Schema or shared protocol schemas."

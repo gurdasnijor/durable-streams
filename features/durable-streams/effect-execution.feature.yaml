@@ -142,3 +142,6 @@ constraints:
   SCHEMA:
     requirements:
       1: "Every public durable execution serialization boundary accepts only discharged Effect schemas whose context requirement is `never`; schemas may use services while being constructed, but replay cannot require live services."
+  TOOLING:
+    requirements:
+      1: "Execution conformance directories must not implement fake Durable Streams fetch transports, fake servers, or fake substrates to prove production protocol guarantees; missing production seams stay explicit blocked conformance until real client, server, OperationLog, or telemetry instrumentation exists."
