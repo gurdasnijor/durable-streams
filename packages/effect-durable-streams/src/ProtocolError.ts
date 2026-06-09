@@ -12,7 +12,7 @@
 import { Data } from "effect"
 
 /** The requested stream does not exist. Lowered to HTTP 404. */
-export class NotFound extends Data.TaggedError("NotFound")<{
+export class NotFound extends Data.TaggedError(`NotFound`)<{
   readonly path: string
 }> {}
 
@@ -21,7 +21,7 @@ export class NotFound extends Data.TaggedError("NotFound")<{
  * producer header, an epoch advance presented with a non-zero seq at the HTTP
  * boundary, or an empty JSON array on POST). Lowered to HTTP 400.
  */
-export class BadRequest extends Data.TaggedError("BadRequest")<{
+export class BadRequest extends Data.TaggedError(`BadRequest`)<{
   readonly reason: string
 }> {}
 
@@ -29,7 +29,7 @@ export class BadRequest extends Data.TaggedError("BadRequest")<{
  * A create-only `PUT` was attempted with a config that conflicts with the
  * existing stream (e.g. different content type). Lowered to HTTP 409.
  */
-export class CreateConflict extends Data.TaggedError("CreateConflict")<{
+export class CreateConflict extends Data.TaggedError(`CreateConflict`)<{
   readonly path: string
   readonly reason: string
 }> {}
@@ -39,9 +39,13 @@ export class CreateConflict extends Data.TaggedError("CreateConflict")<{
  * HTTP 410. (Declared for completeness; retention is out of scope for the
  * memory-store slice and never raised here.)
  */
-export class RetentionGone extends Data.TaggedError("RetentionGone")<{
+export class RetentionGone extends Data.TaggedError(`RetentionGone`)<{
   readonly path: string
   readonly offset: string
 }> {}
 
-export type ProtocolError = NotFound | BadRequest | CreateConflict | RetentionGone
+export type ProtocolError =
+  | NotFound
+  | BadRequest
+  | CreateConflict
+  | RetentionGone

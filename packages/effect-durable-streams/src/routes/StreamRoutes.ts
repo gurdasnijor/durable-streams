@@ -10,13 +10,17 @@
  * never creates a user stream. Normal slash-containing paths
  * (`rooms/general/messages`) pass through untruncated.
  */
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "@effect/platform"
 import { Effect, Option } from "effect"
 import * as ProtocolError from "../ProtocolError.ts"
 import * as Protocol from "../protocol.ts"
 import * as Store from "../Store.ts"
 
-const RESERVED_SEGMENT = "__ds"
+const RESERVED_SEGMENT = `__ds`
 
 /** True when the resolved stream path is under the reserved control namespace. */
 const isReserved = (path: string): boolean =>
@@ -25,7 +29,7 @@ const isReserved = (path: string): boolean =>
 /** Read the wildcard-matched stream path, guarding reserved control paths. */
 const resolvePath = Effect.gen(function* () {
   const ctx = yield* HttpRouter.RouteContext
-  const splat = ctx.params["*"] ?? ""
+  const splat = ctx.params[`*`] ?? ``
   if (isReserved(splat)) {
     return yield* new ProtocolError.NotFound({ path: splat })
   }
@@ -44,13 +48,13 @@ const protocolErrorToResponse = (
   error: ProtocolError.ProtocolError
 ): HttpServerResponse.HttpServerResponse => {
   switch (error._tag) {
-    case "NotFound":
+    case `NotFound`:
       return HttpServerResponse.empty({ status: 404 })
-    case "BadRequest":
+    case `BadRequest`:
       return HttpServerResponse.empty({ status: 400 })
-    case "CreateConflict":
+    case `CreateConflict`:
       return HttpServerResponse.empty({ status: 409 })
-    case "RetentionGone":
+    case `RetentionGone`:
       return HttpServerResponse.empty({ status: 410 })
   }
 }
@@ -61,7 +65,10 @@ const handle = <A>(
     ProtocolError.ProtocolError,
     A
   >
-) => effect.pipe(Effect.catchAll((e) => Effect.succeed(protocolErrorToResponse(e))))
+) =>
+  effect.pipe(
+    Effect.catchAll((e) => Effect.succeed(protocolErrorToResponse(e)))
+  )
 
 export const create = handle(
   Effect.gen(function* () {
@@ -71,8 +78,10 @@ export const create = handle(
     const input = yield* Protocol.decodeCreate(request, path, body)
     const decision = yield* Store.Store.pipe(
       Effect.flatMap((store) => store.createStream(input)),
-      Effect.tap((d) => Effect.annotateCurrentSpan("ds.create.decision", d._tag)),
-      Effect.withSpan("stream.create", { attributes: { "ds.stream": path } })
+      Effect.tap((d) =>
+        Effect.annotateCurrentSpan(`ds.create.decision`, d._tag)
+      ),
+      Effect.withSpan(`stream.create`, { attributes: { "ds.stream": path } })
     )
     return Protocol.createDecisionToResponse(decision, input.contentType)
   })
@@ -92,9 +101,9 @@ export const append = handle(
     const result = yield* Store.Store.pipe(
       Effect.flatMap((store) => store.append(input)),
       Effect.tap((r) =>
-        Effect.annotateCurrentSpan("ds.append.decision", r.append._tag)
+        Effect.annotateCurrentSpan(`ds.append.decision`, r.append._tag)
       ),
-      Effect.withSpan("stream.append", {
+      Effect.withSpan(`stream.append`, {
         attributes: {
           "ds.stream": path,
           "ds.close": input.close,
@@ -120,12 +129,12 @@ export const read = handle(
   Effect.gen(function* () {
     const path = yield* resolvePath
     const params = yield* HttpServerRequest.HttpServerRequest.pipe(
-      Effect.map((r) => new URL(r.url, "http://localhost").searchParams)
+      Effect.map((r) => new URL(r.url, `http://localhost`).searchParams)
     )
-    const offset = params.get("offset") ?? "-1"
+    const offset = params.get(`offset`) ?? `-1`
     const chunk = yield* Store.Store.pipe(
       Effect.flatMap((store) => store.read(path, offset)),
-      Effect.withSpan("stream.read", {
+      Effect.withSpan(`stream.read`, {
         attributes: { "ds.stream": path, "ds.offset": offset },
       })
     )

@@ -1,10 +1,13 @@
 /**
  * Boot the REAL Effect server on an ephemeral port for HTTP-level tests, using
- * the production `Server.start` surface (no re-implementing the layer, no
- * importing `router`). Returns the bound `baseUrl` and a `close`.
+ * the production `Server.layer` (no re-implementing the layer, no importing
+ * `router`). A pre-created Node server is injected so the test can read the
+ * bound port. Returns the bound `baseUrl` and a `close`.
  */
-import { Effect, Exit, Scope } from "effect"
+import { createServer } from "node:http"
+import { Effect, Exit, Layer, Scope } from "effect"
 import * as Server from "../../src/Server.ts"
+import type { AddressInfo } from "node:net"
 
 export interface Running {
   readonly baseUrl: string
@@ -12,11 +15,20 @@ export interface Running {
 }
 
 export const startServer = async (): Promise<Running> => {
+  const node = createServer()
+  const listening = new Promise<number>((resolve) => {
+    node.once(`listening`, () => resolve((node.address() as AddressInfo).port))
+  })
+
   const scope = await Effect.runPromise(Scope.make())
-  const address = await Effect.runPromise(
-    Server.start({ port: 0 }).pipe(Scope.extend(scope))
+  await Effect.runPromise(
+    Layer.buildWithScope(
+      Server.layer({ port: 0, server: () => node }),
+      scope
+    ).pipe(Effect.asVoid)
   )
-  const port = address._tag === `TcpAddress` ? address.port : 0
+  const port = await listening
+
   return {
     baseUrl: `http://127.0.0.1:${port}`,
     close: () => Effect.runPromise(Scope.close(scope, Exit.void)),

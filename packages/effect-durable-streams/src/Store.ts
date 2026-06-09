@@ -15,7 +15,8 @@
  * members from the full SDD algebra are intentionally omitted from this slice
  * to keep the algebra honest and compiling.
  */
-import { Context, Effect, Option } from "effect"
+import { Context } from "effect"
+import type { Effect, Option } from "effect"
 import type { ProtocolError } from "./ProtocolError.ts"
 
 /** Opaque, stream-local offset token. Clients MUST NOT interpret the format. */
@@ -51,9 +52,13 @@ export interface CreateInput {
 
 /** The result of a create-only `PUT`. */
 export type CreateDecision =
-  | { readonly _tag: "Created"; readonly tail: Offset; readonly closed: boolean }
   | {
-      readonly _tag: "AlreadyExists"
+      readonly _tag: `Created`
+      readonly tail: Offset
+      readonly closed: boolean
+    }
+  | {
+      readonly _tag: `AlreadyExists`
       readonly tail: Offset
       readonly closed: boolean
     }
@@ -65,33 +70,33 @@ export type CreateDecision =
  */
 export type AppendDecision =
   | {
-      readonly _tag: "PlainAccepted"
+      readonly _tag: `PlainAccepted`
       readonly nextOffset: Offset
       readonly closed: boolean
     }
   | {
-      readonly _tag: "ProducerAccepted"
-      readonly nextOffset: Offset
-      readonly closed: boolean
-      readonly producerEpoch: number
-      readonly highestAcceptedSeq: number
-    }
-  | {
-      readonly _tag: "ProducerDuplicate"
+      readonly _tag: `ProducerAccepted`
       readonly nextOffset: Offset
       readonly closed: boolean
       readonly producerEpoch: number
       readonly highestAcceptedSeq: number
     }
-  | { readonly _tag: "ProducerFenced"; readonly currentEpoch: number }
   | {
-      readonly _tag: "ProducerGap"
+      readonly _tag: `ProducerDuplicate`
+      readonly nextOffset: Offset
+      readonly closed: boolean
+      readonly producerEpoch: number
+      readonly highestAcceptedSeq: number
+    }
+  | { readonly _tag: `ProducerFenced`; readonly currentEpoch: number }
+  | {
+      readonly _tag: `ProducerGap`
       readonly expectedSeq: number
       readonly receivedSeq: number
     }
-  | { readonly _tag: "ClosedConflict"; readonly finalOffset: Offset }
-  | { readonly _tag: "ContentTypeMismatch" }
-  | { readonly _tag: "StreamSeqRegression" }
+  | { readonly _tag: `ClosedConflict`; readonly finalOffset: Offset }
+  | { readonly _tag: `ContentTypeMismatch` }
+  | { readonly _tag: `StreamSeqRegression` }
 
 export interface TailAdvanced {
   readonly path: StreamPath
@@ -160,6 +165,7 @@ export interface StoreShape {
   ) => Effect.Effect<ReadonlyArray<StreamSnapshot>, ProtocolError>
 }
 
-export class Store extends Context.Tag(
-  "@durable-streams/effect-server/Store"
-)<Store, StoreShape>() {}
+export class Store extends Context.Tag(`@durable-streams/effect-server/Store`)<
+  Store,
+  StoreShape
+>() {}

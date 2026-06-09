@@ -14,7 +14,6 @@ export * as Protocol from "./protocol.ts"
 export * as Schema from "./schema.ts"
 export * as Config from "./Config.ts"
 export * as Server from "./Server.ts"
-export { router } from "./routes/Router.ts"
 
 // Boot when run directly (e.g. `tsx src/index.ts`).
 if (import.meta.url === `file://${process.argv[1]}`) {

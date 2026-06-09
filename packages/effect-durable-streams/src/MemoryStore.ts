@@ -10,7 +10,7 @@
  * the requested offset and keeps offsets per-stream monotonic with no global
  * counter.
  */
-import { Effect, Layer, Option, Schema, STM, TMap } from "effect"
+import { Effect, Layer, Option, STM, Schema, TMap } from "effect"
 import * as ProtocolError from "./ProtocolError.ts"
 import { UintFromString } from "./schema.ts"
 import * as Store from "./Store.ts"
@@ -86,7 +86,7 @@ const decide = (
     const highest = ps ? ps.highestAcceptedSeq : p.seq
     return {
       decision: {
-        _tag: "ProducerDuplicate",
+        _tag: `ProducerDuplicate`,
         nextOffset: offsetOf(record.bytes.length),
         closed: true,
         producerEpoch: ps ? ps.epoch : p.epoch,
@@ -102,7 +102,7 @@ const decide = (
   if (record.closed) {
     return {
       decision: {
-        _tag: "ClosedConflict",
+        _tag: `ClosedConflict`,
         finalOffset: offsetOf(record.bytes.length),
       },
       next: Option.none(),
@@ -113,8 +113,12 @@ const decide = (
   // Close-only (empty body) appends ignore content type (PROTOCOL close-only
   // semantics); a content-bearing append must match the stream content type.
   const hasBody = input.body.length > 0
-  if (hasBody && input.contentType !== "" && input.contentType !== record.contentType) {
-    return { decision: { _tag: "ContentTypeMismatch" }, next: Option.none() }
+  if (
+    hasBody &&
+    input.contentType !== `` &&
+    input.contentType !== record.contentType
+  ) {
+    return { decision: { _tag: `ContentTypeMismatch` }, next: Option.none() }
   }
 
   // --- Stream-seq regression ----------------------------------------------
@@ -124,7 +128,7 @@ const decide = (
       Option.isSome(record.lastStreamSeq) &&
       seq <= record.lastStreamSeq.value
     ) {
-      return { decision: { _tag: "StreamSeqRegression" }, next: Option.none() }
+      return { decision: { _tag: `StreamSeqRegression` }, next: Option.none() }
     }
   }
 
@@ -137,7 +141,7 @@ const decide = (
       // Stale epoch -> fenced (PRODUCERS.2).
       if (p.epoch < ps.epoch) {
         return {
-          decision: { _tag: "ProducerFenced", currentEpoch: ps.epoch },
+          decision: { _tag: `ProducerFenced`, currentEpoch: ps.epoch },
           next: Option.none(),
         }
       }
@@ -148,7 +152,7 @@ const decide = (
         if (p.seq <= ps.highestAcceptedSeq) {
           return {
             decision: {
-              _tag: "ProducerDuplicate",
+              _tag: `ProducerDuplicate`,
               nextOffset: offsetOf(record.bytes.length),
               closed: record.closed,
               producerEpoch: ps.epoch,
@@ -161,7 +165,7 @@ const decide = (
         if (p.seq > expected) {
           return {
             decision: {
-              _tag: "ProducerGap",
+              _tag: `ProducerGap`,
               expectedSeq: expected,
               receivedSeq: p.seq,
             },
@@ -176,7 +180,7 @@ const decide = (
         if (p.seq !== 0) {
           return {
             decision: {
-              _tag: "ProducerGap",
+              _tag: `ProducerGap`,
               expectedSeq: 0,
               receivedSeq: p.seq,
             },
@@ -189,7 +193,7 @@ const decide = (
       // producer whose epoch advance presents a non-zero seq.
       if (p.seq !== 0) {
         return {
-          decision: { _tag: "ProducerGap", expectedSeq: 0, receivedSeq: p.seq },
+          decision: { _tag: `ProducerGap`, expectedSeq: 0, receivedSeq: p.seq },
           next: Option.none(),
         }
       }
@@ -202,7 +206,9 @@ const decide = (
     const next: StreamRecord = {
       ...record,
       bytes: newBytes,
-      closed: record.closed || input.close,
+      // `record.closed` is provably false here (the closed-stream conflict
+      // returned early above), so the post-append closed flag is just `input.close`.
+      closed: input.close,
       closedBy: input.close ? writer : record.closedBy,
       lastStreamSeq: Option.isSome(input.streamSeq)
         ? input.streamSeq
@@ -211,7 +217,7 @@ const decide = (
     }
     return {
       decision: {
-        _tag: "ProducerAccepted",
+        _tag: `ProducerAccepted`,
         nextOffset: offsetOf(newBytes.length),
         closed: next.closed,
         producerEpoch: p.epoch,
@@ -226,7 +232,9 @@ const decide = (
   const next: StreamRecord = {
     ...record,
     bytes: newBytes,
-    closed: record.closed || input.close,
+    // `record.closed` is provably false here (closed-stream conflict returned
+    // early above), so the post-append closed flag is just `input.close`.
+    closed: input.close,
     closedBy: input.close ? writer : record.closedBy,
     lastStreamSeq: Option.isSome(input.streamSeq)
       ? input.streamSeq
@@ -234,7 +242,7 @@ const decide = (
   }
   return {
     decision: {
-      _tag: "PlainAccepted",
+      _tag: `PlainAccepted`,
       nextOffset: offsetOf(newBytes.length),
       closed: next.closed,
     },
@@ -256,12 +264,12 @@ const makeStore = (state: MemoryState): Store.StoreShape => {
             return yield* STM.fail(
               new ProtocolError.CreateConflict({
                 path: input.path,
-                reason: "content-type mismatch with existing stream",
+                reason: `content-type mismatch with existing stream`,
               })
             )
           }
           return {
-            _tag: "AlreadyExists" as const,
+            _tag: `AlreadyExists` as const,
             tail: offsetOf(rec.bytes.length),
             closed: rec.closed,
           }
@@ -277,7 +285,7 @@ const makeStore = (state: MemoryState): Store.StoreShape => {
         }
         yield* TMap.set(state.streams, input.path, record)
         return {
-          _tag: "Created" as const,
+          _tag: `Created` as const,
           tail: offsetOf(record.bytes.length),
           closed: record.closed,
         }
@@ -330,12 +338,14 @@ const makeStore = (state: MemoryState): Store.StoreShape => {
         // through the shared `UintFromString` Schema (no hand-written numeric
         // parsing — effect-server.TOOLING.1).
         const decoded =
-          offset === "-1"
+          offset === `-1`
             ? Option.some(0)
             : Schema.decodeOption(UintFromString)(offset)
         if (Option.isNone(decoded) || decoded.value > tail) {
           return Effect.fail(
-            new ProtocolError.BadRequest({ reason: `invalid offset: ${offset}` })
+            new ProtocolError.BadRequest({
+              reason: `invalid offset: ${offset}`,
+            })
           )
         }
         const body = rec.bytes.slice(decoded.value)
@@ -386,7 +396,10 @@ const makeStore = (state: MemoryState): Store.StoreShape => {
 
   const listStreams = (
     pattern: string
-  ): Effect.Effect<ReadonlyArray<Store.StreamSnapshot>, ProtocolError.ProtocolError> =>
+  ): Effect.Effect<
+    ReadonlyArray<Store.StreamSnapshot>,
+    ProtocolError.ProtocolError
+  > =>
     STM.commit(
       STM.gen(function* () {
         const entries = yield* TMap.toArray(state.streams)
@@ -415,23 +428,23 @@ const makeStore = (state: MemoryState): Store.StoreShape => {
 
 /** Translate a glob pattern (`*` / `**`) into an anchored RegExp (STORE.7). */
 const globToRegExp = (pattern: string): RegExp => {
-  let out = "^"
+  let out = `^`
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i]!
-    if (c === "*") {
-      if (pattern[i + 1] === "*") {
-        out += ".*"
+    if (c === `*`) {
+      if (pattern[i + 1] === `*`) {
+        out += `.*`
         i++
       } else {
-        out += "[^/]*"
+        out += `[^/]*`
       }
-    } else if ("\\^$.|?+()[]{}".includes(c)) {
-      out += "\\" + c
+    } else if (`\\^$.|?+()[]{}`.includes(c)) {
+      out += `\\` + c
     } else {
       out += c
     }
   }
-  out += "$"
+  out += `$`
   return new RegExp(out)
 }
 
@@ -439,7 +452,9 @@ const globToRegExp = (pattern: string): RegExp => {
 export const layer: Layer.Layer<Store.Store> = Layer.effect(
   Store.Store,
   Effect.gen(function* () {
-    const streams = yield* STM.commit(TMap.empty<Store.StreamPath, StreamRecord>())
+    const streams = yield* STM.commit(
+      TMap.empty<Store.StreamPath, StreamRecord>()
+    )
     return makeStore({ streams })
   })
 )

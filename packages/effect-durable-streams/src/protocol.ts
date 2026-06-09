@@ -4,11 +4,10 @@
  * the `Store` decision back into an `HttpServerResponse`. All protocol decisions
  * live in the store; this module only translates the wire format.
  */
-import { HttpServerRequest, HttpServerResponse } from "@effect/platform"
+import { HttpServerResponse } from "@effect/platform"
 import { Effect, Option, Schema } from "effect"
 import * as ProtocolError from "./ProtocolError.ts"
 import { UintFromString } from "./schema.ts"
-import * as Store from "./Store.ts"
 import {
   PRODUCER_EPOCH,
   PRODUCER_EXPECTED_SEQ,
@@ -23,14 +22,16 @@ import {
   STREAM_NEXT_OFFSET,
   STREAM_UP_TO_DATE,
 } from "./headers.ts"
+import type * as Store from "./Store.ts"
+import type { HttpServerRequest } from "@effect/platform"
 
-const CONTENT_TYPE = "content-type"
-const JSON_CT = "application/json"
+const CONTENT_TYPE = `content-type`
+const JSON_CT = `application/json`
 
 /** Normalize a content type to its media type (strip parameters), lowercased. */
 const normalizeContentType = (ct: string | undefined): string => {
-  if (!ct) return ""
-  return ct.split(";")[0]!.trim().toLowerCase()
+  if (!ct) return ``
+  return ct.split(`;`)[0]!.trim().toLowerCase()
 }
 
 const headerValue = (
@@ -67,10 +68,10 @@ const normalizeJsonAppendBody = (
       // Empty array: allowed as an empty create on PUT, rejected on POST.
       if (isPut) return Effect.succeed(new Uint8Array(0))
       return Effect.fail(
-        new ProtocolError.BadRequest({ reason: "empty JSON array on POST" })
+        new ProtocolError.BadRequest({ reason: `empty JSON array on POST` })
       )
     }
-    const flattened = parsed.map((el) => JSON.stringify(el)).join("")
+    const flattened = parsed.map((el) => JSON.stringify(el)).join(``)
     return Effect.succeed(new TextEncoder().encode(flattened))
   }
   return Effect.succeed(body)
@@ -84,7 +85,9 @@ const normalizeJsonAppendBody = (
  */
 const ProducerHeaders = Schema.Struct({
   id: Schema.optional(Schema.String).pipe(Schema.fromKey(REQ_PRODUCER_ID)),
-  epoch: Schema.optional(UintFromString).pipe(Schema.fromKey(REQ_PRODUCER_EPOCH)),
+  epoch: Schema.optional(UintFromString).pipe(
+    Schema.fromKey(REQ_PRODUCER_EPOCH)
+  ),
   seq: Schema.optional(UintFromString).pipe(Schema.fromKey(REQ_PRODUCER_SEQ)),
 })
 const decodeProducerHeaders = Schema.decodeUnknown(ProducerHeaders)
@@ -95,7 +98,9 @@ const decodeProducer = (
   decodeProducerHeaders(headers).pipe(
     Effect.mapError(
       () =>
-        new ProtocolError.BadRequest({ reason: "invalid producer integer header" })
+        new ProtocolError.BadRequest({
+          reason: `invalid producer integer header`,
+        })
     ),
     Effect.flatMap(({ id, epoch, seq }) => {
       const present = [id, epoch, seq].filter((v) => v !== undefined).length
@@ -103,16 +108,17 @@ const decodeProducer = (
       // All three producer headers are required together (PRODUCERS).
       if (id === undefined || epoch === undefined || seq === undefined) {
         return Effect.fail(
-          new ProtocolError.BadRequest({ reason: "incomplete producer headers" })
+          new ProtocolError.BadRequest({
+            reason: `incomplete producer headers`,
+          })
         )
       }
       return Effect.succeed(Option.some({ id, epoch, seq }))
     })
   )
 
-const isClosedHeader = (
-  headers: Record<string, string | undefined>
-): boolean => (headers[REQ_STREAM_CLOSED] ?? "").toLowerCase() === "true"
+const isClosedHeader = (headers: Record<string, string | undefined>): boolean =>
+  (headers[REQ_STREAM_CLOSED] ?? ``).toLowerCase() === `true`
 
 const pathFromSplat = (splat: string): Store.StreamPath => splat
 
@@ -170,40 +176,40 @@ export const appendDecisionToResponse = (
   decision: Store.AppendDecision
 ): HttpServerResponse.HttpServerResponse => {
   switch (decision._tag) {
-    case "PlainAccepted":
+    case `PlainAccepted`:
       return HttpServerResponse.empty({
         status: 204,
         headers: {
           [STREAM_NEXT_OFFSET]: decision.nextOffset,
-          ...(decision.closed ? { [STREAM_CLOSED]: "true" } : {}),
+          ...(decision.closed ? { [STREAM_CLOSED]: `true` } : {}),
         },
       })
-    case "ProducerAccepted":
+    case `ProducerAccepted`:
       return HttpServerResponse.empty({
         status: 200,
         headers: {
           [STREAM_NEXT_OFFSET]: decision.nextOffset,
           [PRODUCER_EPOCH]: String(decision.producerEpoch),
           [PRODUCER_SEQ]: String(decision.highestAcceptedSeq),
-          ...(decision.closed ? { [STREAM_CLOSED]: "true" } : {}),
+          ...(decision.closed ? { [STREAM_CLOSED]: `true` } : {}),
         },
       })
-    case "ProducerDuplicate":
+    case `ProducerDuplicate`:
       return HttpServerResponse.empty({
         status: 204,
         headers: {
           [STREAM_NEXT_OFFSET]: decision.nextOffset,
           [PRODUCER_EPOCH]: String(decision.producerEpoch),
           [PRODUCER_SEQ]: String(decision.highestAcceptedSeq),
-          ...(decision.closed ? { [STREAM_CLOSED]: "true" } : {}),
+          ...(decision.closed ? { [STREAM_CLOSED]: `true` } : {}),
         },
       })
-    case "ProducerFenced":
+    case `ProducerFenced`:
       return HttpServerResponse.empty({
         status: 403,
         headers: { [PRODUCER_EPOCH]: String(decision.currentEpoch) },
       })
-    case "ProducerGap":
+    case `ProducerGap`:
       // F1 (PRODUCERS.8): an epoch advance presented with a non-zero seq is the
       // ProducerGap(expected:0) decision; at the HTTP boundary the protocol
       // treats "new epoch must start at seq 0" as a malformed request -> 400.
@@ -218,16 +224,16 @@ export const appendDecisionToResponse = (
               [PRODUCER_RECEIVED_SEQ]: String(decision.receivedSeq),
             },
           })
-    case "ClosedConflict":
+    case `ClosedConflict`:
       return HttpServerResponse.empty({
         status: 409,
         headers: {
-          [STREAM_CLOSED]: "true",
+          [STREAM_CLOSED]: `true`,
           [STREAM_NEXT_OFFSET]: decision.finalOffset,
         },
       })
-    case "ContentTypeMismatch":
-    case "StreamSeqRegression":
+    case `ContentTypeMismatch`:
+    case `StreamSeqRegression`:
       return HttpServerResponse.empty({ status: 409 })
   }
 }
@@ -240,18 +246,18 @@ export const createDecisionToResponse = (
   const baseHeaders: Record<string, string> = {
     [STREAM_NEXT_OFFSET]: decision.tail,
     ...(contentType ? { [CONTENT_TYPE]: contentType } : {}),
-    ...(decision.closed ? { [STREAM_CLOSED]: "true" } : {}),
+    ...(decision.closed ? { [STREAM_CLOSED]: `true` } : {}),
   }
   // 201 on fresh create, 200 on idempotent create with matching config.
   return HttpServerResponse.empty({
-    status: decision._tag === "Created" ? 201 : 200,
+    status: decision._tag === `Created` ? 201 : 200,
     headers: baseHeaders,
   })
 }
 
 /** Compute a weak ETag that varies with closure status (READS.2). */
 const etagFor = (chunk: Store.ReadChunk, start: string): string =>
-  `"${start}:${chunk.nextOffset}:${chunk.closed ? "c" : "o"}"`
+  `"${start}:${chunk.nextOffset}:${chunk.closed ? `c` : `o`}"`
 
 /** Lower a `ReadChunk` into the catch-up GET response (READS.1). */
 export const readChunkToResponse = (
@@ -259,14 +265,14 @@ export const readChunkToResponse = (
   requestedOffset: string
 ): HttpServerResponse.HttpServerResponse =>
   HttpServerResponse.uint8Array(chunk.body, {
-    contentType: chunk.contentType || "application/octet-stream",
+    contentType: chunk.contentType || `application/octet-stream`,
     headers: {
       [STREAM_NEXT_OFFSET]: chunk.nextOffset,
-      ...(chunk.upToDate ? { [STREAM_UP_TO_DATE]: "true" } : {}),
-      ...(chunk.closed ? { [STREAM_CLOSED]: "true" } : {}),
+      ...(chunk.upToDate ? { [STREAM_UP_TO_DATE]: `true` } : {}),
+      ...(chunk.closed ? { [STREAM_CLOSED]: `true` } : {}),
       etag: etagFor(chunk, requestedOffset),
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
+      "cache-control": `no-store`,
+      "x-content-type-options": `nosniff`,
     },
   })
 
@@ -279,7 +285,7 @@ export const headToResponse = (
     headers: {
       [STREAM_NEXT_OFFSET]: tail.tailOffset,
       ...(tail.contentType ? { [CONTENT_TYPE]: tail.contentType } : {}),
-      ...(tail.closed ? { [STREAM_CLOSED]: "true" } : {}),
+      ...(tail.closed ? { [STREAM_CLOSED]: `true` } : {}),
     },
   })
 
