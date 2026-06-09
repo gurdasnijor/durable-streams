@@ -7,7 +7,7 @@
  * pure wire schemas/constants live in `../schema.ts` and `../headers.ts`; no
  * `Store` type leaks into those.
  */
-import { HttpServerResponse } from "@effect/platform"
+import { Headers, HttpServerResponse } from "@effect/platform"
 import { Effect, Option, Schema } from "effect"
 import * as ProtocolError from "../ProtocolError.ts"
 import { UintFromString } from "../schema.ts"
@@ -30,19 +30,12 @@ import type { HttpServerRequest } from "@effect/platform"
 
 const CONTENT_TYPE = `content-type`
 
-/** Normalize a content type to its media type (strip parameters), lowercased. */
-const normalizeContentType = (ct: string | undefined): string => {
-  if (!ct) return ``
-  return ct.split(`;`)[0]!.trim().toLowerCase()
-}
-
-const headerValue = (
-  headers: Record<string, string | undefined>,
-  name: string
-): Option.Option<string> => {
-  const v = headers[name]
-  return v === undefined ? Option.none() : Option.some(v)
-}
+/** Normalize a `Content-Type` header to its media type (strip parameters). */
+const normalizeContentType = (ct: Option.Option<string>): string =>
+  Option.match(ct, {
+    onNone: () => ``,
+    onSome: (v) => v.split(`;`)[0]!.trim().toLowerCase(),
+  })
 
 // NOTE: HTTP.6 (JSON append normalization — one-level array flattening with
 // preserved message boundaries) is DEFERRED / out of scope for this slice. The
@@ -66,7 +59,7 @@ const ProducerHeaders = Schema.Struct({
 const decodeProducerHeaders = Schema.decodeUnknown(ProducerHeaders)
 
 const decodeProducer = (
-  headers: Record<string, string | undefined>
+  headers: Headers.Headers
 ): Effect.Effect<Option.Option<Store.Producer>, ProtocolError.BadRequest> =>
   decodeProducerHeaders(headers).pipe(
     Effect.mapError(
@@ -90,8 +83,11 @@ const decodeProducer = (
     })
   )
 
-const isClosedHeader = (headers: Record<string, string | undefined>): boolean =>
-  (headers[REQ_STREAM_CLOSED] ?? ``).toLowerCase() === `true`
+const isClosedHeader = (headers: Headers.Headers): boolean =>
+  Option.exists(
+    Headers.get(headers, REQ_STREAM_CLOSED),
+    (v) => v.toLowerCase() === `true`
+  )
 
 /**
  * Decode an append (`POST`) request into a `Store.AppendInput`. Performs JSON
@@ -106,7 +102,7 @@ export const decodeAppend = (
   Effect.gen(function* () {
     const headers = request.headers
     const producer = yield* decodeProducer(headers)
-    const contentType = normalizeContentType(headers[CONTENT_TYPE])
+    const contentType = normalizeContentType(Headers.get(headers, CONTENT_TYPE))
     const close = isClosedHeader(headers)
     // Body is stored as opaque bytes (HTTP.6 JSON normalization deferred).
     return {
@@ -114,7 +110,7 @@ export const decodeAppend = (
       contentType,
       body: rawBody,
       close,
-      streamSeq: headerValue(headers, REQ_STREAM_SEQ),
+      streamSeq: Headers.get(headers, REQ_STREAM_SEQ),
       producer,
     } satisfies Store.AppendInput
   })
@@ -126,7 +122,7 @@ export const decodeCreate = (
 ): Effect.Effect<Store.CreateInput, ProtocolError.BadRequest> =>
   Effect.sync(() => {
     const headers = request.headers
-    const contentType = normalizeContentType(headers[CONTENT_TYPE])
+    const contentType = normalizeContentType(Headers.get(headers, CONTENT_TYPE))
     const close = isClosedHeader(headers)
     // Body is stored as opaque bytes (HTTP.6 JSON normalization deferred).
     return {
