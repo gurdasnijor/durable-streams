@@ -11,7 +11,7 @@
  * (`rooms/general/messages`) pass through untruncated.
  */
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import * as ProtocolError from "../ProtocolError.ts"
 import * as Protocol from "../protocol.ts"
 import * as Store from "../Store.ts"
@@ -70,7 +70,9 @@ export const create = handle(
     const body = yield* readBody
     const input = yield* Protocol.decodeCreate(request, path, body)
     const decision = yield* Store.Store.pipe(
-      Effect.flatMap((store) => store.createStream(input))
+      Effect.flatMap((store) => store.createStream(input)),
+      Effect.tap((d) => Effect.annotateCurrentSpan("ds.create.decision", d._tag)),
+      Effect.withSpan("stream.create", { attributes: { "ds.stream": path } })
     )
     return Protocol.createDecisionToResponse(decision, input.contentType)
   })
@@ -82,8 +84,23 @@ export const append = handle(
     const request = yield* HttpServerRequest.HttpServerRequest
     const body = yield* readBody
     const input = yield* Protocol.decodeAppend(request, path, body)
+    // Production observation seam: the `stream.append` span carries the stream,
+    // close flag, producer presence, and the append DECISION tag — which encodes
+    // producer validation + epoch/seq outcome (ProducerAccepted/Duplicate/
+    // Fenced/Gap). Execution/client conformance can target this span instead of
+    // a harness substrate.
     const result = yield* Store.Store.pipe(
-      Effect.flatMap((store) => store.append(input))
+      Effect.flatMap((store) => store.append(input)),
+      Effect.tap((r) =>
+        Effect.annotateCurrentSpan("ds.append.decision", r.append._tag)
+      ),
+      Effect.withSpan("stream.append", {
+        attributes: {
+          "ds.stream": path,
+          "ds.close": input.close,
+          "ds.producer": Option.isSome(input.producer),
+        },
+      })
     )
     return Protocol.appendDecisionToResponse(result.append)
   })
@@ -107,7 +124,10 @@ export const read = handle(
     )
     const offset = params.get("offset") ?? "-1"
     const chunk = yield* Store.Store.pipe(
-      Effect.flatMap((store) => store.read(path, offset))
+      Effect.flatMap((store) => store.read(path, offset)),
+      Effect.withSpan("stream.read", {
+        attributes: { "ds.stream": path, "ds.offset": offset },
+      })
     )
     return Protocol.readChunkToResponse(chunk, offset)
   })

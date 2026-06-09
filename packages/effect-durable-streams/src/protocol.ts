@@ -5,7 +5,7 @@
  * live in the store; this module only translates the wire format.
  */
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import * as ProtocolError from "./ProtocolError.ts"
 import * as Store from "./Store.ts"
 import {
@@ -32,12 +32,19 @@ const normalizeContentType = (ct: string | undefined): string => {
   return ct.split(";")[0]!.trim().toLowerCase()
 }
 
-/** A strict non-negative integer: digits only, no sign/exponent/whitespace. */
-const parseStrictUint = (raw: string): Option.Option<number> => {
-  if (!/^[0-9]+$/.test(raw)) return Option.none()
-  const n = Number.parseInt(raw, 10)
-  return Number.isSafeInteger(n) ? Option.some(n) : Option.none()
-}
+/**
+ * A strict non-negative producer-header integer as a `Schema`: digits only (no
+ * sign/exponent/whitespace), a safe integer. Decoding a malformed header yields
+ * `Option.none` so the caller can map it to a `400`.
+ */
+const StrictUint = Schema.compose(
+  Schema.String.pipe(Schema.pattern(/^\d+$/)),
+  Schema.NumberFromString
+).pipe(
+  Schema.int(),
+  Schema.nonNegative(),
+  Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
+)
 
 const headerValue = (
   headers: Record<string, string | undefined>,
@@ -82,32 +89,39 @@ const normalizeJsonAppendBody = (
   return Effect.succeed(body)
 }
 
+/**
+ * The producer tuple as a `Schema` over the request headers: header names map to
+ * fields via `fromKey`, and `Producer-Epoch`/`Producer-Seq` decode through the
+ * strict-uint transform (a malformed integer is a `ParseError`). Excess headers
+ * are ignored by default. The all-or-none rule is applied after decode.
+ */
+const ProducerHeaders = Schema.Struct({
+  id: Schema.optional(Schema.String).pipe(Schema.fromKey(REQ_PRODUCER_ID)),
+  epoch: Schema.optional(StrictUint).pipe(Schema.fromKey(REQ_PRODUCER_EPOCH)),
+  seq: Schema.optional(StrictUint).pipe(Schema.fromKey(REQ_PRODUCER_SEQ)),
+})
+const decodeProducerHeaders = Schema.decodeUnknown(ProducerHeaders)
+
 const decodeProducer = (
   headers: Record<string, string | undefined>
-): Effect.Effect<Option.Option<Store.Producer>, ProtocolError.BadRequest> => {
-  const id = headers[REQ_PRODUCER_ID]
-  const epoch = headers[REQ_PRODUCER_EPOCH]
-  const seq = headers[REQ_PRODUCER_SEQ]
-
-  const present = [id, epoch, seq].filter((v) => v !== undefined).length
-  if (present === 0) return Effect.succeed(Option.none())
-  // Partial producer headers -> 400 (PRODUCERS: all three required together).
-  if (id === undefined || epoch === undefined || seq === undefined) {
-    return Effect.fail(
-      new ProtocolError.BadRequest({ reason: "incomplete producer headers" })
-    )
-  }
-  const epochN = parseStrictUint(epoch)
-  const seqN = parseStrictUint(seq)
-  if (Option.isNone(epochN) || Option.isNone(seqN)) {
-    return Effect.fail(
-      new ProtocolError.BadRequest({ reason: "invalid producer integer header" })
-    )
-  }
-  return Effect.succeed(
-    Option.some({ id, epoch: epochN.value, seq: seqN.value })
+): Effect.Effect<Option.Option<Store.Producer>, ProtocolError.BadRequest> =>
+  decodeProducerHeaders(headers).pipe(
+    Effect.mapError(
+      () =>
+        new ProtocolError.BadRequest({ reason: "invalid producer integer header" })
+    ),
+    Effect.flatMap(({ id, epoch, seq }) => {
+      const present = [id, epoch, seq].filter((v) => v !== undefined).length
+      if (present === 0) return Effect.succeed(Option.none<Store.Producer>())
+      // All three producer headers are required together (PRODUCERS).
+      if (id === undefined || epoch === undefined || seq === undefined) {
+        return Effect.fail(
+          new ProtocolError.BadRequest({ reason: "incomplete producer headers" })
+        )
+      }
+      return Effect.succeed(Option.some({ id, epoch, seq }))
+    })
   )
-}
 
 const isClosedHeader = (
   headers: Record<string, string | undefined>
