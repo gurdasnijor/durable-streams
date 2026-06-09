@@ -17,6 +17,7 @@ components:
       4: "The Effect server supports long-poll and SSE live reads without unbounded buffering."
       5: "The Effect server emits protocol status codes, headers, and JSON error bodies required by `packages/server-conformance-tests`."
       6: "JSON append handling applies protocol message normalization, including one-level array flattening and empty-array method semantics."
+      7: "The reserved `__ds` control API is guarded so an unmatched `/v1/stream/__ds/*` path is rejected and never creates a user stream named `__ds/...`; normal slash-containing stream reads still reach the stream routes."
   HTTP_API:
     requirements:
       1: "Structured reserved control-plane endpoints are described once as an Effect `HttpApi` contract shared by server and Effect client."
@@ -25,6 +26,8 @@ components:
       4: "The base stream data plane remains implemented with `HttpRouter` because it requires raw bytes, protocol headers, long-poll, and SSE streaming behavior."
       5: "Any hand-written Effect client code around the shared `HttpApi` contract is limited to semantic wrappers such as scoped pull-wake leases and producer resources."
       6: "Control-plane handlers lower store and manager failures into the declared `HttpApi` error variants before returning to the shared contract."
+      7: "When the control plane is touched, the shared contract declares the full control surface (subscription create/claim/ack/release, webhook callback/delivery state, schedules, JWKS) with every protocol error as a declared variant; it is not left as an admitted stub, and handler effects close over declared protocol errors only."
+      8: "Any `HttpApi`/router route parameter for a stream path represents the full slash-containing path (for example `rooms/general/messages`), not a single path segment, so the shared contract cannot truncate nested stream paths."
   STORE:
     requirements:
       1: "Persistence is supplied through an Effect `Layer`, not hardcoded to a concrete database."
@@ -41,6 +44,8 @@ components:
       12: "`@effect/platform` `KeyValueStore` may be exposed as a narrow compatibility adapter, but it is not sufficient for the core Durable Streams server store."
       13: "The preferred strategic durable backend shape is SQL/Postgres-compatible storage, with PGlite or an equivalent embedded Effect SQL layer as the first local SQL target; LMDB remains an interim adapter or spike."
       14: "A SQL-shaped store can update authoritative append-log tables and derived query tables in one transaction so colocated host components can observe ready work without changing protocol correctness."
+      15: "Durable store write transactions do not resolve their returned `Effect` until the written bytes are durably flushed. `lmdb-js` `transactionSync` commits before its async flush, so the durable layer awaits `db.flushed` before signaling append success. This gates any durable-backend readiness claim and is proven by restart/acked-append conformance."
+      16: "Server-side CEL filter pushdown may use a Postgres extension (e.g. `pg-cel`) but the `Store` algebra must not depend on it; PGlite supports extensions via its plugin API, yet `pg-cel` is not yet packaged for PGlite, so a port is a validation spike and the backend accepts extension injection/config so it can be enabled without changing the `Store` algebra."
   PRODUCERS:
     requirements:
       1: "Producer validation treats duplicate producer appends as successful protocol control flow."
@@ -49,6 +54,9 @@ components:
       4: "Append decisions distinguish plain accepted appends from producer-accepted appends so HTTP status mapping preserves 204 vs 200 semantics."
       5: "Closed-stream, content-type mismatch, stream sequence regression, and producer sequence-gap conflicts are resolved through one append decision path with protocol precedence."
       6: "Producer responses report the highest accepted sequence for the producer tuple, not merely the request sequence."
+      7: "A retried close append by the same producer tuple is an idempotent duplicate success (204), not a closed-stream conflict (409); the closed-stream check consults `closedBy` / the producer tuple before returning `ClosedConflict`."
+      8: "A producer epoch advance presented with a non-zero `Producer-Seq` is mapped explicitly to a `ProducerGap(expected: 0)` decision (no implicit fall-through); an epoch bump requires `Producer-Seq: 0` because execution auto-claim depends on epoch-bump + seq=0."
+      9: "Producer epoch auto-claim is a compare-and-set: the producer epoch is the write-authority correctness fence and the subscription lease/generation is only liveness; without a single-claimant lease two executors can epoch-ping-pong even though every stale write is fenced."
   READS:
     requirements:
       1: "Catch-up reads implement offset sentinels, retention errors, fork stitching, cache headers, ETags, up-to-date, and EOF semantics from `PROTOCOL.md`."
@@ -67,6 +75,7 @@ components:
       6: "Wake evaluation scans durable stream records from each linked subscription's evaluated cursor to the current durable tail and records wake snapshots for matching records without advancing the public ack cursor."
       7: "For colocated SQL/PGlite deployments, live SQL query or changefeed observation may be used as an optimized host activation transport over derived ready-work tables, while pull-wake remains the portable external protocol."
       8: "SQL CEL pushdown is capability-detected: when a backend exposes a CEL evaluator such as pg-cel the wake evaluator may push predicates into SQL, otherwise it falls back to server-side Effect CEL evaluation with the same wake decisions."
+      9: "A periodic wake reconciliation sweep re-reads each linked subscription from its evaluated cursor to the current durable tail independent of tail-advance notifications, so a dropped or coalesced notification cannot leave a subscription permanently unwoken; notifications remain hints only."
   SUBSCRIPTIONS:
     requirements:
       1: "Subscription create, read, delete, stream membership, webhook callback, pull-wake claim, ack, and release are implemented under `__ds/subscriptions`."
@@ -105,12 +114,16 @@ components:
       3: "Non-matching filtered events do not wake the subscription."
       4: "Filtered subscriptions maintain public ack cursors separately from internal evaluated cursors."
       5: "Filter evaluation receives one durable event envelope at a time, including decoded value, stream path, offset, headers, content type, and state-event collection/key/operation metadata when present."
+      6: "`FilterEvaluator` performs capability detection: when CEL pushdown is available it pushes down (e.g. `cel_eval_bool`), otherwise it evaluates CEL in-Effect inside the wake reconciliation loop; the two paths are interchangeable behind one interface and never change the `Store` algebra."
   OBSERVABILITY:
     requirements:
       1: "The server exposes OpenTelemetry tracing through Effect's tracer layer."
       2: "HTTP route spans use low-cardinality route names rather than raw stream paths."
       3: "Domain spans cover append, producer validation, subscription wake, claim, ack, webhook delivery, and schedule fire."
       4: "Metrics cover request counts, append decisions, wake attempts, claim conflicts, fenced requests, webhook retries, and schedule outcomes."
+  PROJECTIONS:
+    requirements:
+      1: "State projectors that materialize derived views are single-writer or producer-fenced; derived projections are non-authoritative, but duplicate projector writes still corrupt or add read-noise to the materialized view unless fenced or deduplicated."
   CONFORMANCE:
     requirements:
       1: "The Effect server runs against `packages/server-conformance-tests` as a first-class server target."
@@ -121,6 +134,9 @@ components:
       6: "Server behavior compatibility is defined by `packages/server-conformance-tests`, not by source or API compatibility with `packages/server`."
       7: "Durable-backend conformance proves producer-state and log append atomicity across crash/retry windows."
       8: "Durable-backend conformance proves ordered range scans return stream records in offset order and subscription scans start from the evaluated cursor."
+      9: "Routing conformance includes a red probe that a slash-containing stream path round-trips through the stream routes without truncation and that an undefined `/v1/stream/__ds/*` path is rejected rather than creating a user stream."
+      10: "Durable-backend conformance proves an acknowledged append survives process restart because the write-transaction bytes are flushed before append success is signaled; this gates any durable-backend readiness claim."
+      11: "When CEL pushdown is available, a witness/parity conformance test proves pushed-down CEL and the in-Effect fallback evaluator produce the same wake decisions for the same event envelopes and filter."
 
 constraints:
   SCOPE:
