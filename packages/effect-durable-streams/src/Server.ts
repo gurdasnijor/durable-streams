@@ -10,7 +10,7 @@ import { NodeHttpServer } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
 import * as AppConfig from "./Config.ts"
 import * as MemoryStore from "./MemoryStore.ts"
-import { router } from "./routes/Router.ts"
+import { router } from "./routes/Stream.ts"
 import type * as http from "node:http"
 
 export interface ServerOptions {
