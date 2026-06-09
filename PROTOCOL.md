@@ -1225,22 +1225,22 @@ stream reads.
 
 Fields:
 
-| Field               | Required | Description                                                                 |
-| ------------------- | -------- | --------------------------------------------------------------------------- |
-| `filter.language`   | Yes      | Filter language. The initial portable language is `cel`.                    |
-| `filter.expression` | Yes      | Boolean expression evaluated per appended event.                            |
-| `filter.self`       | No       | Immutable JSON object provided as additional expression context.             |
+| Field               | Required | Description                                                      |
+| ------------------- | -------- | ---------------------------------------------------------------- |
+| `filter.language`   | Yes      | Filter language. The initial portable language is `cel`.         |
+| `filter.expression` | Yes      | Boolean expression evaluated per appended event.                 |
+| `filter.self`       | No       | Immutable JSON object provided as additional expression context. |
 
 Filters are part of the normalized subscription configuration hash. Reconfirming
 a subscription with a different filter MUST return `409 Conflict`.
 
 Filter evaluation context:
 
-| Name     | Description                                                |
-| -------- | ---------------------------------------------------------- |
-| `event`  | The decoded JSON stream item being evaluated.              |
+| Name     | Description                                                 |
+| -------- | ----------------------------------------------------------- |
+| `event`  | The decoded JSON stream item being evaluated.               |
 | `stream` | Stream-root-relative path of the stream that received data. |
-| `offset` | Offset of the evaluated item.                              |
+| `offset` | Offset of the evaluated item.                               |
 | `self`   | The immutable `filter.self` object, or `{}` if omitted.     |
 
 The initial filter contract applies to streams with `application/json` content.
@@ -1283,15 +1283,15 @@ Content-Type: application/json
 
 Fields:
 
-| Field          | Required | Description                                                                    |
-| -------------- | -------- | ------------------------------------------------------------------------------ |
-| `at`           | Yes      | RFC3339 timestamp. The append MUST NOT occur before this instant.              |
-| `stream`       | Yes      | Stream-root-relative target stream path.                                       |
-| `content_type` | Yes      | Content type used for the scheduled append.                                    |
-| `body`         | Yes      | JSON value to append when `content_type` is `application/json`.                |
+| Field          | Required | Description                                                                     |
+| -------------- | -------- | ------------------------------------------------------------------------------- |
+| `at`           | Yes      | RFC3339 timestamp. The append MUST NOT occur before this instant.               |
+| `stream`       | Yes      | Stream-root-relative target stream path.                                        |
+| `content_type` | Yes      | Content type used for the scheduled append.                                     |
+| `body`         | Yes      | JSON value to append when `content_type` is `application/json`.                 |
 | `body_base64`  | No       | Base64url bytes for non-JSON scheduled appends. Mutually exclusive with `body`. |
-| `producer`     | No       | Producer fencing tuple applied to the eventual append.                         |
-| `close`        | No       | If `true`, the scheduled append also closes the target stream.                 |
+| `producer`     | No       | Producer fencing tuple applied to the eventual append.                          |
+| `close`        | No       | If `true`, the scheduled append also closes the target stream.                  |
 
 Creating a schedule is idempotent by `:id`. A second `PUT` with the same
 normalized schedule MUST return `200 OK`. A second `PUT` with a different
