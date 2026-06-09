@@ -566,12 +566,22 @@ const checkout = Effect.gen(function* () {
 })
 ```
 
-Storage persists encoded values, not runtime values. Transport codecs are an
-internal adapter selected by content type and encoded shape. Custom
-serialization is expressed as Schema transformations.
+Public durable execution boundaries accept discharged schemas only:
+
+```ts
+Schema.Schema<A, I, never>
+```
+
+Schemas may use services while user code constructs them, but replay, durable
+decode, durable encode, signal materialization, deferred resolution, and state
+wait materialization cannot require live services. Storage persists encoded
+values, not runtime values. Transport codecs are an internal adapter selected by
+content type and encoded shape. Custom serialization is expressed as Schema
+transformations.
 
 This covers `effect-execution.API.10`, `effect-execution.CONFORMANCE.13`, and
-the replacement for deprecated `effect-execution.USERLAND.3`.
+the replacement for deprecated `effect-execution.USERLAND.3`, plus
+`effect-execution.SCHEMA.1`.
 
 ## `run` and retry policy
 
@@ -579,8 +589,8 @@ the replacement for deprecated `effect-execution.USERLAND.3`.
 
 ```ts
 export interface RunOptions<A, E, EncodedA = unknown, EncodedE = unknown> {
-  readonly output?: Schema.Schema<A, EncodedA>
-  readonly error?: Schema.Schema<E, EncodedE>
+  readonly output?: Schema.Schema<A, EncodedA, never>
+  readonly error?: Schema.Schema<E, EncodedE, never>
   readonly retry?: RetryPolicy
   readonly idempotencyKey?: string
   readonly cancellation?: CancellationPolicy
@@ -828,6 +838,40 @@ External side effects require one of:
 
 This covers `effect-execution.DELIVERY.1` through
 `effect-execution.DELIVERY.5`.
+
+## Colocated SQL host activation
+
+The portable activation transport remains pull-wake or another explicit
+server/client coordination primitive. A host that is colocated with the
+SQL/PGlite store can use a narrower internal path: observe derived ready-work
+tables through live query or changefeed APIs and then run the same activation
+protocol.
+
+```text
+SQL/PGlite store commits wake or state change
+  -> derived ready_invocations / wake_snapshots row changes
+  -> host observes via live.changes or live query
+  -> host claims the activation in a transaction
+  -> host replays the operation log to tail
+  -> host evaluates missing work
+  -> host records outcome or suspension intent
+  -> host marks the ready row complete only after durability
+```
+
+This can shrink the `effect-durable-streams <-> host` wiring for colocated
+deployments because the host does not need to poll the external pull-wake HTTP
+endpoint. It does not change execution correctness:
+
+- the operation log remains authoritative;
+- activation still replays before running user code;
+- producer epoch and producer sequence still fence operation-log writes; and
+- the host still cannot ack or clear ready work until the durable outcome or
+  suspension intent exists.
+
+Remote workers and clients still use pull-wake, webhook, long-poll, SSE, or the
+ordinary Durable Streams protocol surface. SQL live queries are an optimized
+host activation transport, not a replacement for the public substrate. This
+covers `effect-execution.DELIVERY.8`.
 
 ## Single-writer invocation fencing
 

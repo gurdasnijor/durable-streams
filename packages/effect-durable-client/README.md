@@ -28,8 +28,8 @@ Effect-native operations:
 Reads are `Stream`s. Writes are `Effect`s or scoped producers. Schema
 validation happens at the wire boundary.
 
-Prefer a service-shaped, URL-keyed surface with optional schema? See
-`DurableStreamClient` below — it delegates to this same core.
+Prefer a service-shaped, path-bound surface? See `DurableStreamClient` below —
+it delegates to this same core.
 
 `appendWithProducer` is a one-shot producer-fenced append for callers that
 need to distinguish a newly accepted append from an idempotent duplicate:
@@ -71,13 +71,12 @@ const readLive = messages.read({ live: "sse" }).pipe(
 )
 ```
 
-## URL-keyed client facade (optional schema)
+## Path-bound client handles
 
 For an ergonomic, service-shaped surface — provide one batteries-included
-layer, then call methods by URL — use `DurableStreamClient`. Schema is
-_optional_: raw ops skip it for quick use; `withSchema(schema)` gives the fully
-typed `Stream<A>` / `Sink<A>` surface over the same core (same transport, same
-typed errors, same real follow loop).
+layer, then call methods by URL or stream path — use `DurableStreamClient`.
+Schema is optional for raw tooling, but typed application code binds schema and
+path together with `client.stream(path, schema)`.
 
 ```ts
 import {
@@ -95,11 +94,11 @@ const program = Effect.gen(function* () {
   yield* client.append(url, JSON.stringify({ user: "alice", text: "hi" }))
   const raw = yield* client.stream(url).json // ReadonlyArray<unknown>
 
-  // Typed: bind a Schema once, get decoded values + a Sink producer.
+  // Typed: bind path + Schema together, get decoded values + a producer.
   const Message = Schema.Struct({ user: Schema.String, text: Schema.String })
-  const chat = client.withSchema(Message)
-  yield* chat.append(url, { user: "bob", text: "yo" })
-  yield* chat.read(url, { live: "sse" }).pipe(
+  const chat = client.stream(url, Message)
+  yield* chat.append({ user: "bob", text: "yo" })
+  yield* chat.read({ until: "close" }).pipe(
     Stream.tap((m) => Effect.log(`${m.user}: ${m.text}`)),
     Stream.runDrain
   )
@@ -114,6 +113,54 @@ Effect.runPromise(
 `jsonBatches()` exposes per-response `{ items, offset, upToDate, cursor }`
 metadata; producers add `close` / `pendingCount` / `epoch` / `nextSeq`.
 
+For fixed singleton streams, wrap that projection with ordinary
+`Effect.Service` application code. Keep the `DurableStreamClient` layer at the
+app root; the stream service depends on the bare tag and supplies runtime
+address data such as base URL and headers when it creates the handle.
+
+```ts
+import {
+  DurableStreamClient,
+  DurableStreamClientLayerFetch,
+  ReadFrom,
+} from "effect-durable-client"
+import { Config, Effect, Redacted, Schema, Stream } from "effect"
+
+const Message = Schema.Struct({
+  user: Schema.String,
+  text: Schema.String,
+})
+
+class ChatMessages extends Effect.Service<ChatMessages>()("ChatMessages", {
+  effect: Effect.gen(function* () {
+    const client = yield* DurableStreamClient
+    const streamRoot = yield* Config.string("DURABLE_STREAMS_URL")
+    const token = yield* Config.redacted("DURABLE_STREAMS_TOKEN")
+    return client.stream(
+      new URL("chat.room-1", streamRoot).toString(),
+      Message,
+      { headers: { authorization: () => `Bearer ${Redacted.value(token)}` } }
+    )
+  }),
+}) {}
+
+const program = Effect.gen(function* () {
+  const chat = yield* ChatMessages
+  yield* chat.create({ contentType: "application/json" })
+  yield* chat.append({ user: "alice", text: "hello" })
+  return yield* chat
+    .read({ from: ReadFrom.beginning, until: "tail" })
+    .pipe(Stream.runCollect)
+}).pipe(
+  Effect.provide(ChatMessages.Default),
+  Effect.provide(DurableStreamClientLayerFetch)
+)
+```
+
+`client.withSchema(schema)` remains as a legacy URL-keyed compatibility helper
+for older tests and benchmarks. It is not the canonical typed API because it
+creates a pathless schema mini-client.
+
 ### Which surface?
 
 The two are **intentional siblings**, both thin delegations over the same
@@ -126,11 +173,12 @@ The two are **intentional siblings**, both thin delegations over the same
   through `R` (provide once at the edge). Use this inside reusable
   services/runtime layers, because they can accept a caller-supplied `Endpoint`
   with its policy.
-- **`DurableStreamClient` — the optional app / edge facade.** URL-keyed,
-  optional schema, batteries-included layer, `HttpClient` captured in the
-  layer. Best for scripts, examples, simple/untyped clients, and raw-stream
-  tooling. It takes a `url` + per-call headers, **not** a full `Endpoint`, so
-  for endpoints that need `onError`/`retrySchedule` policy, prefer `define`.
+- **`DurableStreamClient.stream(path, schema)` — the low-ceremony typed app
+  idiom.** Path-bound, schema-bound, batteries-included layer, `HttpClient`
+  captured in the layer. Best for scripts, examples, simple typed clients, and
+  raw-stream tooling. It takes a `url` or stream path + per-call headers,
+  **not** a full `Endpoint`, so for endpoints that need
+  `onError`/`retrySchedule` policy, prefer `define`.
 
 ## Reserved coordination endpoints
 

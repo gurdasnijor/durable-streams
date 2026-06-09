@@ -1,0 +1,38 @@
+{
+  "name": "durable-streams-protocol",
+  "version": "0.0.0",
+  "description": "Shared Effect HttpApi contract for Durable Streams reserved control-plane routes.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./Api": {
+      "types": "./src/Api.ts",
+      "default": "./src/Api.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.96.1",
+    "effect": "^3.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

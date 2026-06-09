@@ -39,6 +39,23 @@ export class SequenceGap extends Data.TaggedError(`DurableStream/SequenceGap`)<{
   readonly receivedSeq: number
 }> {}
 
+export class ConfigConflict extends Data.TaggedError(
+  `DurableStream/ConfigConflict`
+)<{
+  readonly reason: string
+}> {}
+
+export class AlreadyClaimed extends Data.TaggedError(
+  `DurableStream/AlreadyClaimed`
+)<{
+  readonly currentHolder: string | undefined
+  readonly generation: number | undefined
+}> {}
+
+export class Fenced extends Data.TaggedError(`DurableStream/Fenced`)<{
+  readonly generation: number | undefined
+}> {}
+
 export type ReadError = DecodeError | TransportError | NotFound | Gone
 export type WriteError =
   | TransportError

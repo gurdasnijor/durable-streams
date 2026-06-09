@@ -8,7 +8,7 @@ import type {
 } from "./schema.ts"
 
 export interface RunOptions<E, Encoded = unknown> {
-  readonly errorSchema?: Schema.Schema<E, Encoded>
+  readonly errorSchema?: Schema.Schema<E, Encoded, never>
 }
 
 export class SessionStream extends Context.Tag(

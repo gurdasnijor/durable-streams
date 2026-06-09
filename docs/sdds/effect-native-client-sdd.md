@@ -157,7 +157,8 @@ The names can change during implementation. The stable architecture is:
 
 - `ApiClient`: generated `HttpApiClient` construction and escape hatch;
 - `DurableStreamClient`: canonical public service entry point;
-- `DurableStream`: runtime stream handle types;
+- `DurableStream`: runtime stream handle types and lower-level endpoint-bound
+  helpers;
 - `Producer`: scoped producer resource acquired from a client stream handle;
 - `Lease` and `Subscription`: coordination wrappers over generated endpoints;
 - `Schedule`: delayed append wrapper over generated endpoints;
@@ -191,7 +192,7 @@ should usually use semantic wrappers. That boundary satisfies
 
 ## Basic usage
 
-The ordinary app path is:
+The ordinary app path is path-bound:
 
 1. acquire the `DurableStreamClient` service from the Effect environment;
 2. ask the client for a typed stream handle by supplying a stream path and wire
@@ -218,32 +219,109 @@ const program = Effect.gen(function* () {
 
   const producer = yield* chat.producer("chat-writer")
 
-  const nextOffset = yield* producer.append({
+  yield* producer.append({
     id: "msg-1",
     room: "general",
     text: "hello",
   })
 
-  const recent = yield* chat.read({ until: "tail" }).pipe(
-    Stream.map((item) => item.value),
-    Stream.runCollect
-  )
+  const recent = yield* chat.read({ until: "tail" }).pipe(Stream.runCollect)
 
-  return { nextOffset, recent }
+  return { recent }
 }).pipe(Effect.scoped, Effect.provide(DurableStreamClientLayerFetch))
+```
+
+For fixed singleton streams that deserve a named application service, wrap the
+projection with ordinary `Effect.Service`; no package-specific stream resource
+primitive is needed:
+
+```ts
+import { Config, Effect, Redacted, Schema, Stream } from "effect"
+import {
+  DurableStreamClient,
+  DurableStreamClientLayerFetch,
+  ReadFrom,
+} from "effect-durable-client"
+
+class Message extends Schema.Class<Message>("Message")({
+  id: Schema.String,
+  room: Schema.String,
+  text: Schema.String,
+}) {}
+
+class Messages extends Effect.Service<Messages>()("Messages", {
+  effect: Effect.gen(function* () {
+    const client = yield* DurableStreamClient
+    const streamRoot = yield* Config.string("DURABLE_STREAMS_URL")
+    const token = yield* Config.redacted("DURABLE_STREAMS_TOKEN")
+    return client.stream(
+      new URL("rooms/general/messages", streamRoot).toString(),
+      Message,
+      { headers: { authorization: () => `Bearer ${Redacted.value(token)}` } }
+    )
+  }),
+}) {}
+
+const program = Effect.gen(function* () {
+  const messages = yield* Messages
+
+  yield* messages.create({ contentType: "application/json" })
+  yield* messages.append({
+    id: "msg-1",
+    room: "general",
+    text: "hello",
+  })
+
+  const recent = yield* messages
+    .read({ from: ReadFrom.beginning, until: "tail" })
+    .pipe(Stream.runCollect)
+
+  return { recent }
+}).pipe(
+  Effect.provide(Messages.Default),
+  Effect.provide(DurableStreamClientLayerFetch)
+)
 ```
 
 This keeps the useful Effect RPC lesson without importing the RPC endpoint
 model. The wire schema is explicit at the client boundary, but the concrete
 Durable Streams resource is still the stream path.
-`client.stream("rooms/general/messages", Message)` returns a typed handle. Reads
-decode `Message` values at the wire boundary; producer appends encode `Message`
-values before sending. The handle is pure, while the producer is scoped because
-it owns stateful protocol resources.
+`client.stream("rooms/general/messages", Message)` returns a typed handle;
+wrapping that handle in a fixed singleton service is ordinary application code.
+Because the handle is pure, the wrapper uses `effect:` and does not acquire
+producer state into the service scope. Reads decode `Message` values at the wire
+boundary; single appends and batch appends encode `Message` values through
+distinct methods before sending. The handle is pure, while the producer is
+scoped because it owns stateful protocol resources.
 
-`"rooms/general/messages"` is a Durable Streams stream path resolved by the
-client layer against the configured stream root. It is not an RPC-style endpoint
+`"rooms/general/messages"` is a Durable Streams stream path or URL supplied as
+runtime address data to the projection. It is not an RPC-style endpoint
 definition; the protocol still treats stream URL shape as server-defined.
+Application services that bind a fixed stream path should still provision one
+`DurableStreamClient` layer at the app root. They can combine runtime address
+data such as base URLs and headers with `client.stream(path, schema, opts)`
+inside ordinary service construction without creating a separate client layer
+per stream service.
+Pathless schema mini-clients are legacy compatibility only and are not the
+canonical public surface. This covers `effect-client.PACKAGE.6`,
+`effect-client.LOG.10`, and `effect-client.CONFORMANCE.12`.
+
+Effect precedent:
+
+- `@effect/platform` `KeyValueStore.forSchema(schema)` binds a schema as a
+  projection on a base service; `DurableStreamClient.stream(path, schema)` is
+  the corresponding Durable Streams projection because the stream address is
+  runtime data.
+- `@effect/rpc` `RpcClient.make(group)` and `@effect/experimental` `EventGroup`
+  / `EventLog` keep protocol declarations and runtime transport/log services
+  separate; this client keeps stream schemas and data-plane handles separate
+  from reserved control-plane generation.
+- `@effect/cluster` `Entity` is the precedent for future parameterized,
+  addressed resource contracts. This SDD keeps that as a future extension until
+  the path-template/addressing API is fully designed.
+
+Schemas carry codec and type. Addresses, tags, layers, and product wiring carry
+binding. Stream paths and behavior are not stored in `Schema.annotations`.
 
 ## Log plane
 
@@ -263,7 +341,7 @@ export declare namespace DurableStreamClient {
   export interface Service {
     readonly stream: <A, I>(
       path: StreamPath,
-      schema: Schema.Schema<A, I>
+      schema: Schema.Schema<A, I, never>
     ) => DurableStream.Handle<A>
 
     readonly subscriptions: SubscriptionClient
@@ -274,20 +352,38 @@ export declare namespace DurableStreamClient {
 
 export declare namespace DurableStream {
   export interface Handle<A> {
+    readonly create: (
+      opts?: CreateOptions
+    ) => Effect.Effect<void, Transport | Conflict>
+
     readonly read: (opts?: {
       readonly from?: ReadFrom
       readonly until?: "close" | "tail"
-    }) => Stream.Stream<Item<A>, ReadError, HttpClient.HttpClient>
+    }) => Stream.Stream<A, ReadError>
 
     readonly readWithControl: (opts?: {
       readonly from?: ReadFrom
       readonly until?: "close" | "tail"
-    }) => Stream.Stream<ReadEvent<A>, ReadError, HttpClient.HttpClient>
+    }) => Stream.Stream<ReadEvent<A>, ReadError>
+
+    readonly append: (
+      event: A
+    ) => Effect.Effect<{ readonly offset: Offset }, WriteError>
+
+    readonly appendBatch: (
+      events: ReadonlyArray<A>
+    ) => Effect.Effect<{ readonly offset: Offset }, WriteError>
+
+    readonly close: (
+      opts?: CloseOptions
+    ) => Effect.Effect<{ readonly finalOffset: Offset }, WriteError>
+
+    readonly delete: Effect.Effect<void, Transport | StreamGone>
 
     readonly producer: (
       producerId: ProducerId,
       opts?: ProducerOptions
-    ) => Effect.Effect<Producer<A>, never, Scope.Scope | HttpClient.HttpClient>
+    ) => Effect.Effect<Producer<A>, Transport, Scope.Scope>
 
     readonly schedule: (
       id: string,
@@ -305,6 +401,34 @@ export declare namespace DurableStream {
   }
 }
 ```
+
+`ReadFrom` is explicit:
+
+```ts
+export type ReadFrom =
+  | Offset
+  | "beginning"
+  | "now"
+  | { readonly offset: Offset; readonly cursor?: string }
+
+export const ReadFrom = {
+  beginning: "beginning" as const,
+  now: "now" as const,
+  offset: (offset: Offset): ReadFrom => offset,
+  cursor: (offset: Offset, cursor: string): ReadFrom => ({ offset, cursor }),
+}
+```
+
+`ReadFrom.beginning` maps to the protocol beginning sentinel (`-1`).
+`ReadFrom.now` performs a `HEAD` for the concrete stream at read start and uses
+that response offset as the resume point. `ReadFrom.offset(offset)` accepts an
+opaque offset token directly, and `ReadFrom.cursor(offset, cursor)` carries the
+offset plus protocol cursor echo state without treating either value as a local
+index. `until: "tail"` bounds the read at the current catch-up boundary;
+`until: "close"` follows live until the protocol stream is closed.
+`ReadFrom.now` plus `until: "tail"` therefore does not replay earlier history.
+This covers `effect-client.LOG.8`, `effect-client.LOG.9`, and
+`effect-client.CONFORMANCE.11`.
 
 Implementation responsibilities:
 
@@ -332,7 +456,7 @@ reserved control-plane resources.
 export interface ReadonlyDurableStreamClient {
   readonly stream: <A, I>(
     path: StreamPath,
-    schema: Schema.Schema<A, I>
+    schema: Schema.Schema<A, I, never>
   ) => DurableStream.ReadonlyHandle<A>
 }
 
@@ -354,18 +478,30 @@ Producer identity is a scoped resource, not a loose append option bag.
 ```ts
 export interface Producer<A> {
   readonly append: (
-    value: A | ReadonlyArray<A>,
+    value: A,
+    opts?: { readonly streamSeq?: StreamSeq }
+  ) => Effect.Effect<Offset, AppendError, HttpClient.HttpClient>
+
+  readonly appendBatch: (
+    values: ReadonlyArray<A>,
     opts?: { readonly streamSeq?: StreamSeq }
   ) => Effect.Effect<Offset, AppendError, HttpClient.HttpClient>
 
   readonly appendAndClose: (
-    value: A | ReadonlyArray<A>,
+    value: A,
     opts?: { readonly streamSeq?: StreamSeq }
   ) => Effect.Effect<Offset, AppendError, HttpClient.HttpClient>
 
   readonly close: Effect.Effect<Offset, AppendError, HttpClient.HttpClient>
 }
 ```
+
+Single-event append and batch append must stay distinct. Durable Streams JSON
+mode flattens the top-level request array into stream items, so an API shaped as
+`append(value: A | ReadonlyArray<A>)` is ambiguous when `A` itself is an array.
+`append(arrayEvent)` encodes one item as `[arrayEvent]`; `appendBatch(events)`
+encodes many items as `events`. This covers `effect-client.PRODUCER.8`,
+`effect-client.CONFORMANCE.9`, and `effect-client.CONFORMANCE.10`.
 
 Producer resources are acquired from a runtime stream handle, for example
 `chat.producer("chat-writer")` in the basic usage section above. There is no
@@ -381,6 +517,8 @@ allows two valid recovery paths: resume from explicit producer protocol state, o
 claim a fresh epoch and start that epoch at `seq=0`. This is load-bearing for
 higher-level keyed replay consumers because real servers can mint opaque,
 non-sequential offsets and unrelated event count is not a producer sequence.
+If the server exposes highest accepted producer tuple inspection, that explicit
+protocol state is the only valid same-epoch recovery source.
 
 `Producer-Seq` is internal to the resource. `Stream-Seq` remains an optional
 caller-supplied protocol ordering token for the rare multi-writer case. The two
@@ -421,7 +559,7 @@ export interface SubscriptionClient {
     opts: {
       readonly stream: DurableStream.Handle<A>
       readonly filter: CelExpression
-      readonly schema?: Schema.Schema<A, I>
+      readonly schema?: Schema.Schema<A, I, never>
     }
   ) => Effect.Effect<
     Subscription,
@@ -479,6 +617,22 @@ they cannot be confused with locally executable predicates. The helper may do
 syntax construction and escaping, but it must not decide wake eligibility,
 maintain predicate indexes, or evaluate CEL against decoded events. The server
 remains the only authority for §7.4.1 filtered wake decisions.
+
+For execution handoff, `waitForState` passes branded CEL through as opaque
+protocol data:
+
+```ts
+yield *
+  waitForState(approvals, {
+    filter: CEL.and(
+      CEL.eq(CEL.path("event", "approvalId"), request.approvalId),
+      CEL.eq(CEL.path("event", "status"), "approved")
+    ),
+  })
+```
+
+The client can serialize this filter into a subscription config, but it cannot
+run the predicate locally to decide whether a wait should resume.
 
 For higher-level runtimes, scheduled append, filtered subscriptions, and scoped
 leases are the resume substrate:
@@ -566,6 +720,28 @@ Transport, rate-limit, retention, gone, config conflict, and schema parse errors
 should be similarly typed. Generated control-plane errors lower into this model
 at the wrapper boundary.
 
+The shared `durable-streams-protocol` `HttpApi` contract declares protocol
+errors only. Server handlers must translate store, manager, or implementation
+failures into those declared variants before returning. The generated client
+must expose protocol errors such as `ProtocolError`, `ConfigConflict`,
+`AlreadyClaimed`, and `Fenced`, not raw store implementation error types. This
+covers `effect-client.HTTP_API.5`.
+
+## Effect Schema boundary
+
+Every durable wire boundary accepts discharged schemas only:
+
+```ts
+Schema.Schema<A, I, never>
+```
+
+Schemas may depend on services while they are constructed by user code, but by
+the time a schema is passed to the durable client for encode, decode, append,
+read, replay, schedule, signal, or wait materialization, its context requirement
+must be `never`. Durable replay cannot depend on a live service to interpret
+past facts. This covers `effect-client.SCHEMA.1` and is shared with
+`effect-execution.SCHEMA.1`.
+
 ## Layers
 
 The package should not bake in global fetch, auth, retry, or tracing.
@@ -609,6 +785,15 @@ from the next usable producer sequence. A recovered producer must either append
 with explicit protocol producer state or claim a fresh epoch starting at `seq=0`;
 it must not append with `events.length` and must not derive sequence from stream
 offsets.
+
+Additional client conformance should include:
+
+- an array-valued JSON event appended through single append and read back as one
+  item;
+- multiple JSON events appended through explicit batch append and read back as
+  multiple items; and
+- `ReadFrom.beginning` and `ReadFrom.now` witnesses so beginning and head-start
+  behavior cannot drift.
 
 ## Migration from current client package
 

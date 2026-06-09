@@ -82,7 +82,7 @@ describe(`DurableStreamClient facade`, () => {
     )
   })
 
-  it(`withSchema gives the typed Stream<A>/Sink surface`, async () => {
+  it(`legacy withSchema gives the typed Stream<A>/Sink surface`, async () => {
     const url = server.streamUrl(`facade-typed`)
     await run(
       Effect.gen(function* () {
@@ -103,7 +103,7 @@ describe(`DurableStreamClient facade`, () => {
     )
   })
 
-  it(`withSchema producer round-trips via Stream.run + accessors`, async () => {
+  it(`legacy withSchema producer round-trips via Stream.run + accessors`, async () => {
     const url = server.streamUrl(`facade-producer`)
     await run(
       Effect.gen(function* () {

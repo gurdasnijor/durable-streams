@@ -9,19 +9,38 @@
  */
 
 export * as DurableStream from "./namespace.ts"
+export * as CEL from "./CEL.ts"
 export {
   DurableStreamClient,
+  ReadFrom,
   layer as DurableStreamClientLayer,
   layerFetch as DurableStreamClientLayerFetch,
 } from "./Client.ts"
+export { makeControlClient, lowerControlError } from "./ApiClient.ts"
+export {
+  filteredPullWakeConfig,
+  makeSubscriptionClient,
+} from "./Subscription.ts"
+export type { CelExpression, CelPath } from "./CEL.ts"
 export type {
   DurableStreamClientService,
+  DurableStreamHandle,
   RawAppendOptions,
   RawBatch,
   RawStreamOptions,
   RawStreamSession,
+  ReadEvent,
+  ReadFrom as ReadFromInput,
+  ReadonlyDurableStreamHandle,
+  StreamHandleOptions,
   TypedClient,
 } from "./Client.ts"
+export type {
+  FilteredPullWakeOptions,
+  PullWakeSubscriptionConfig,
+  SubscriptionClient,
+  SubscriptionFilter,
+} from "./Subscription.ts"
 export type {
   Bound,
   CloseOptions,
@@ -47,7 +66,10 @@ export type {
 } from "./DurableStream.ts"
 export {
   Conflict,
+  AlreadyClaimed,
+  ConfigConflict,
   DecodeError,
+  Fenced,
   Gone,
   NotFound,
   SequenceGap,

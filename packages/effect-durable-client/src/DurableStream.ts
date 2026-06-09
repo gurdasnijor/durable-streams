@@ -211,6 +211,9 @@ export interface Producer<A> extends Sink.Sink<
   never
 > {
   readonly append: (event: A) => Effect.Effect<void, ProducerFailure>
+  readonly appendBatch: (
+    events: ReadonlyArray<A>
+  ) => Effect.Effect<void, ProducerFailure>
   readonly flush: Effect.Effect<void, ProducerFailure>
   /**
    * Bump the producer epoch and reset the local sequence counter to 0.
@@ -237,7 +240,7 @@ export interface Producer<A> extends Sink.Sink<
 
 export interface ReadOpts<A, I> {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
   /**
    * Starting offset for the read.
    *
@@ -277,17 +280,25 @@ export interface ReadOpts<A, I> {
 
 export interface CollectOpts<A, I> {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
   /** See {@link CreateOptions.headers}. */
   readonly headers?: HeadersRecord
 }
 
 export interface AppendOpts<A, I> {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
   readonly event: A
   readonly seq?: string
   /** See {@link CreateOptions.headers}. */
+  readonly headers?: HeadersRecord
+}
+
+export interface AppendBatchOpts<A, I> {
+  readonly endpoint: Endpoint
+  readonly schema: Schema.Schema<A, I, never>
+  readonly events: ReadonlyArray<A>
+  readonly seq?: string
   readonly headers?: HeadersRecord
 }
 
@@ -297,7 +308,7 @@ export type ProducerAppendResult =
 
 export interface ProducerAppendOpts<A, I> {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
   readonly event: A
   readonly producerId: string
   readonly producerEpoch: number
@@ -308,7 +319,7 @@ export interface ProducerAppendOpts<A, I> {
 
 export interface ProducerMakeOpts<A, I> extends ProducerOptions {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
 }
 
 export interface SnapshotResult<A> {
@@ -323,7 +334,7 @@ export interface SnapshotResult<A> {
  */
 export interface Bound<A, I> {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
   readonly read: (opts?: {
     readonly live?: LiveMode
     readonly offset?: Offset
@@ -364,6 +375,17 @@ export interface Bound<A, I> {
     opts?: {
       readonly seq?: string
       /** Per-call headers merged on top of `endpoint.headers`. */
+      readonly headers?: HeadersRecord
+    }
+  ) => Effect.Effect<
+    { readonly offset: Offset },
+    WriteError,
+    HttpClient.HttpClient
+  >
+  readonly appendBatch: (
+    events: ReadonlyArray<A>,
+    opts?: {
+      readonly seq?: string
       readonly headers?: HeadersRecord
     }
   ) => Effect.Effect<

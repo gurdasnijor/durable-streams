@@ -362,8 +362,12 @@ The initial implementation should provide:
 
 - `MemoryStore.layer`: development and conformance, backed by Effect STM
   transactional data structures, no production durability.
-- `LmdbOrderedKvStore.layer`: first durable backend target, backed by LMDB and
-  exposed through a small ordered transactional key-value driver.
+- `LmdbOrderedKvStore.layer`: interim durable adapter or spike, backed by LMDB
+  and exposed through a small ordered transactional key-value driver.
+- a SQL/Postgres-compatible durable backend target, preferably PGlite or an
+  equivalent embedded Effect SQL layer for local durable development and
+  conformance, with Postgres as the production shape when external replication,
+  operational tooling, or CEL pushdown is required.
 
 The existing `packages/server/src/file-store.ts` already uses LMDB for durable
 metadata and append-only log files for stream bytes. The Effect-native server
@@ -387,6 +391,75 @@ backend conformance needs its own concurrent same-stream producer append test.
 It also needs crash/retry conformance proving producer-state and log append
 atomicity. Higher-level execution consumers rely on that boundary to ensure a
 durable fact append and its producer dedupe state cannot split across a crash.
+
+## SQL-shaped durable storage and colocated host observation
+
+The strategic durable backend should be SQL-shaped rather than KV-shaped. The
+domain `Store` can be implemented directly with `@effect/sql` tables and
+transactions:
+
+```text
+stream_events        authoritative append facts
+stream_tails         per-stream tail, content type, close, retention metadata
+producer_state       producer id, epoch, highest accepted seq
+subscriptions        config, linked streams, public ack cursor, evaluated cursor
+wake_snapshots       generation-fenced pending work snapshots
+schedules            due time, target stream, producer tuple, status
+state_changes        authoritative State Protocol change facts
+state_current        derived current rows for wait/query paths
+ready_invocations    derived host activation rows
+```
+
+Append transactions update authoritative tables and any cheap derived query
+tables in the same commit:
+
+```text
+append transaction:
+  validate stream and producer tuple
+  insert stream_events
+  update stream_tails and producer_state
+  insert tail-advance / wake hint
+  update derived state_current or ready_invocations rows when applicable
+  commit
+```
+
+This covers `effect-server.STORE.13` and `effect-server.STORE.14`.
+
+PGlite is a good first local SQL target because it is embedded,
+Postgres-compatible, and has an Effect SQL adapter in the current Effect v4
+line. In the current Effect v3 workspace this may require either waiting for the
+repo's Effect version move or adapting only the small client wrapper locally.
+The store algebra should not depend on PGlite-specific APIs; it should depend on
+the domain `Store` and, for SQL backends, ordinary `SqlClient` transactions.
+
+PGlite live queries are useful as a colocated host observation transport. The
+host can subscribe to derived SQL tables such as `ready_invocations`,
+`wake_snapshots`, or `state_current` and receive inserts, updates, and deletes
+without polling the external pull-wake HTTP endpoint. This can shrink the
+internal server-to-host wiring:
+
+```text
+SQL/PGlite store commit
+  -> ready_invocations row changes
+  -> host live.changes / live.incrementalQuery observer
+  -> host claims activation in SQL transaction
+  -> host replays operation log and runs missing work
+  -> host records outcome or suspension intent
+  -> host acks only after the durable record exists
+```
+
+Live queries are an optimization over derived tables, not the source of
+correctness. The source of correctness remains the authoritative append log,
+producer state, wake snapshots, and execution operation log. Pull-wake remains
+the portable external protocol for non-colocated workers and clients. This
+covers `effect-server.WAKE.7`.
+
+SQL CEL pushdown should be capability-detected. If a Postgres-shaped backend has
+a CEL evaluator such as `pg-cel`, the wake evaluator can push predicates into
+SQL over JSON/event envelopes. If the capability is absent, including an
+embedded PGlite deployment without a CEL extension package, the wake evaluator
+falls back to server-side Effect CEL evaluation while preserving the same wake
+decisions. This covers `effect-server.WAKE.8`.
 
 The store transaction boundary is append durability, not wake delivery. A stream
 append transaction commits log bytes, stream metadata, producer state, and a
@@ -1599,6 +1672,10 @@ need ACIDs and conformance before calling a backend production-ready.
 - Multi-process live read requires an explicit notification transport. Memory
   can use STM queues; durable backends need an implementation-specific
   cross-node signal.
+- Colocated SQL/PGlite hosts may use live query or changefeed observation over
+  derived ready-work tables instead of external pull-wake polling. This is a
+  host activation optimization only; it does not replace pull-wake, webhook,
+  SSE, or long-poll protocol behavior for remote clients and workers.
 - The concrete router composition API should be pinned against the installed
   `@effect/platform` version during implementation. The SDD examples use the
   vendored platform-node patterns, but `HttpLayerRouter` may be the better
@@ -1723,13 +1800,17 @@ Additional conformance should be added before advertising:
 11. Implement schedules with schedule-change notification and producer-fenced
     fire.
 12. Implement filters.
-13. Add `OrderedKvStore` and `LmdbOrderedKvStore` layers, then wire the
-    domain `Store` through the ordered key-value driver.
-14. Add LMDB restart, ordered range scan, atomic append plus producer state, and
-    concurrent same-stream producer conformance.
-15. Add durable cross-node notification transport once the LMDB backend is
-    advertised for multi-process deployments.
-16. Add OpenTelemetry wiring and low-cardinality route/domain spans.
+13. Add the SQL/PGlite durable store path with migrations, transactional append
+    plus producer state, ordered per-stream range scans, and restart
+    conformance.
+14. Add colocated host live-query observation over derived ready-work tables.
+15. Keep `OrderedKvStore` and `LmdbOrderedKvStore` as an interim/spike adapter
+    if still useful, with restart, ordered range scan, flush-before-ack, atomic
+    append plus producer state, and concurrent same-stream producer conformance
+    before it is advertised as durable.
+16. Add durable cross-node notification transport for non-colocated
+    multi-process deployments.
+17. Add OpenTelemetry wiring and low-cardinality route/domain spans.
 
 This order keeps the protocol surface testable at each step and avoids
 inventing higher-level execution semantics before the substrate is conformant.
