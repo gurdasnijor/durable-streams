@@ -1,6 +1,6 @@
 {
   "name": "effect-durable-execution",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Effect-native durable execution primitives with named durable steps over Durable Streams.",
   "license": "Apache-2.0",
   "type": "module",

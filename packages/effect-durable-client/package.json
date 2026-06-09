@@ -1,6 +1,6 @@
 {
   "name": "effect-durable-client",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Effect-native client for the Durable Streams Protocol: Stream-shaped reads, Sink-shaped writes, schema-validated decode/encode boundaries.",
   "license": "Apache-2.0",
   "type": "module",

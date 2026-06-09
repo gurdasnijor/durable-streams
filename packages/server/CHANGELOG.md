@@ -1,5 +1,15 @@
 # @durable-streams/server
 
+## 0.3.8
+
+### Patch Changes
+
+- Reject unsupported subscription filters instead of silently treating filtered subscriptions as unfiltered subscriptions. ([`87f781f`](https://github.com/durable-streams/durable-streams/commit/87f781f30d28a18f7bee7875935c2b39a053da7f))
+
+- Updated dependencies []:
+  - @durable-streams/client@0.2.6
+  - @durable-streams/state@0.3.1
+
 ## 0.3.7
 
 ### Patch Changes
