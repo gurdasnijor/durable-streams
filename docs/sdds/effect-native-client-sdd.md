@@ -236,7 +236,7 @@ projection with ordinary `Effect.Service`; no package-specific stream resource
 primitive is needed:
 
 ```ts
-import { Effect, Schema, Stream } from "effect"
+import { Config, Effect, Redacted, Schema, Stream } from "effect"
 import {
   DurableStreamClient,
   DurableStreamClientLayerFetch,
@@ -250,11 +250,16 @@ class Message extends Schema.Class<Message>("Message")({
 }) {}
 
 class Messages extends Effect.Service<Messages>()("Messages", {
-  scoped: Effect.gen(function* () {
+  effect: Effect.gen(function* () {
     const client = yield* DurableStreamClient
-    return client.stream("rooms/general/messages", Message)
+    const streamRoot = yield* Config.string("DURABLE_STREAMS_URL")
+    const token = yield* Config.redacted("DURABLE_STREAMS_TOKEN")
+    return client.stream(
+      new URL("rooms/general/messages", streamRoot).toString(),
+      Message,
+      { headers: { authorization: () => `Bearer ${Redacted.value(token)}` } }
+    )
   }),
-  dependencies: [DurableStreamClientLayerFetch],
 }) {}
 
 const program = Effect.gen(function* () {
@@ -272,7 +277,10 @@ const program = Effect.gen(function* () {
     .pipe(Stream.runCollect)
 
   return { recent }
-}).pipe(Effect.provide(Messages.Default))
+}).pipe(
+  Effect.provide(Messages.Default),
+  Effect.provide(DurableStreamClientLayerFetch)
+)
 ```
 
 This keeps the useful Effect RPC lesson without importing the RPC endpoint
@@ -280,14 +288,20 @@ model. The wire schema is explicit at the client boundary, but the concrete
 Durable Streams resource is still the stream path.
 `client.stream("rooms/general/messages", Message)` returns a typed handle;
 wrapping that handle in a fixed singleton service is ordinary application code.
-Reads decode `Message` values at the wire boundary; single appends and batch
-appends encode `Message` values through distinct methods before sending. The
-handle is pure, while the producer is scoped because it owns stateful protocol
-resources.
+Because the handle is pure, the wrapper uses `effect:` and does not acquire
+producer state into the service scope. Reads decode `Message` values at the wire
+boundary; single appends and batch appends encode `Message` values through
+distinct methods before sending. The handle is pure, while the producer is
+scoped because it owns stateful protocol resources.
 
-`"rooms/general/messages"` is a Durable Streams stream path resolved by the
-client layer against the configured stream root. It is not an RPC-style endpoint
+`"rooms/general/messages"` is a Durable Streams stream path or URL supplied as
+runtime address data to the projection. It is not an RPC-style endpoint
 definition; the protocol still treats stream URL shape as server-defined.
+Application services that bind a fixed stream path should still provision one
+`DurableStreamClient` layer at the app root. They can combine runtime address
+data such as base URLs and headers with `client.stream(path, schema, opts)`
+inside ordinary service construction without creating a separate client layer
+per stream service.
 Pathless schema mini-clients are legacy compatibility only and are not the
 canonical public surface. This covers `effect-client.PACKAGE.6`,
 `effect-client.LOG.10`, and `effect-client.CONFORMANCE.12`.
