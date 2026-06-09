@@ -11,6 +11,7 @@ import { Effect, Layer } from "effect"
 import * as AppConfig from "./Config.ts"
 import * as MemoryStore from "./MemoryStore.ts"
 import { router } from "./routes/Stream.ts"
+import * as StreamHttp from "./StreamHttp.ts"
 import type * as http from "node:http"
 
 export interface ServerOptions {
@@ -29,9 +30,10 @@ export const layer = (options: ServerOptions) => {
     options.server ?? (() => createServer()),
     { port: options.port }
   )
+  const AppLive = StreamHttp.layer.pipe(Layer.provide(MemoryStore.layer))
 
   return HttpServer.serve(HttpMiddleware.logger)(router).pipe(
-    Layer.provide(MemoryStore.layer),
+    Layer.provide(AppLive),
     Layer.provide(ServerLive)
   )
 }
