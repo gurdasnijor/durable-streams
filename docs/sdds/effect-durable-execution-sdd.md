@@ -1137,6 +1137,184 @@ It must not own:
 Those are host-platform responsibilities above this package or Durable Streams
 substrate responsibilities below it.
 
+## Build addendum: review-driven execution contracts
+
+These contracts were added after the first execution-surface review. They must be
+reflected in the spec, SDD, and conformance harness before building past the
+current authoring surface. Each subsection cites the ACIDs it satisfies.
+
+### Replay checkpoints and snapshots
+
+Folding the entire operation log on every activation is O(history) and cannot be
+the only replay path for long-running invocations. The runtime may persist a
+folded invocation-state snapshot at a checkpoint watermark and resume replay from
+that watermark, applying only the operation-log tail after it.
+
+- `operationLogWatermark` is a replay checkpoint that bounds where snapshot-based
+  replay resumes; it is not only a materialization marker.
+- A snapshot captures folded runtime state (lifecycle, step outcomes, suspended
+  waits, deferred values, materialized user state) as of its watermark offset.
+- Snapshot-based replay must reconstruct the same runtime state as a full-log
+  replay; snapshots are an optimization, never a divergence source.
+- Large or hot keyed state may be checkpointed or stored outside the operation
+  log and referenced from a snapshot rather than re-folded from every log event.
+- Snapshots are derived artifacts: a missing or stale snapshot degrades to a
+  full-log fold, never to incorrect state.
+
+This is on the execution roadmap before long-running invocations are supported;
+the first conformance case proves equivalence between snapshot+tail replay and
+full-log replay.
+
+This covers `effect-execution.JOURNAL.9` through `effect-execution.JOURNAL.11`,
+`effect-execution.INVOCATION.8`, and `effect-execution.CONFORMANCE.31`.
+
+### Body determinism contract
+
+Replay re-runs the lazy `Effect` body. Anything that produces a different value
+on the replay activation than on the original activation, when evaluated outside a
+keyed `run`, is replay-unsafe. This includes:
+
+- wall-clock reads (`Date.now`, `new Date()`);
+- random values and generated UUIDs;
+- positional/auto-incrementing counters derived from local state; and
+- branches taken on wall-clock or other non-deterministic inputs.
+
+The rule: capture non-determinism inside `run(key, ...)` so the value is recorded
+as a `StepSucceeded` fact and returned verbatim on replay. The body itself stays
+deterministic given the operation log. Conformance includes a body-divergence
+case proving a value produced outside `run` is detected as replay-unsafe rather
+than silently accepted.
+
+This covers `effect-execution.API.28` and `effect-execution.CONFORMANCE.32`.
+
+### Durable races resolve by earliest operation-log offset
+
+`Effect.race`/`Effect.raceAll` resolve by which fiber wins at wall-clock runtime.
+That is not replay-stable: on replay both durable facts may already exist, and the
+local race could pick a different winner than the original activation. Durable
+waits therefore race through the typed `select` helper, whose winner is the wait
+whose satisfying fact has the earliest operation-log offset.
+
+```ts
+const outcome =
+  yield *
+  select({
+    approval: signal("approval", Approval),
+    timeout: sleep("deadline", Duration.days(7)),
+  })
+```
+
+On replay, if both `SignalReceived(approval)` and `SleepFired(deadline)` exist,
+`select` resolves to whichever has the lower operation-log offset — the same
+winner every time. `Effect.race`/`raceAll` remain available for ordinary local
+effects but must never race durable waits.
+
+This covers `effect-execution.API.29` and `effect-execution.CONFORMANCE.33`.
+
+### State write and `waitForState` replay semantics
+
+`state()` writes are not live mutations replayed by re-reading a store. They lower
+to durable operation-log facts (`StateSet`/`StateDeleted`) in the same `run`-style
+recorded manner, so replay reconstructs invocation-local state deterministically
+from the log. `sharedState()` exposes reads only and never writes.
+
+`waitForState` freezes the matched value into the `StateWaitSatisfied` fact at the
+moment the wait is satisfied. Replay returns the captured value, not a fresh read
+of live state — even if the underlying domain state has since changed. This keeps
+the body deterministic across replays regardless of later domain mutations.
+
+This covers `effect-execution.API.30`, `effect-execution.API.31`,
+`effect-execution.CONFORMANCE.34`, and `effect-execution.CONFORMANCE.35`.
+
+### Authoritative domain state vs derived projections
+
+Two collection families must not be confused:
+
+- **Authoritative domain state/events**: the facts a product cares about
+  (payments, approvals, webhook-delivered events). These may be ingress- or
+  webhook-written and are wait-observable through `waitForState`.
+- **Derived execution-metadata projections**: `invocations`, `steps`,
+  `signalWaits`, `awakeables`, `deferreds`. These are non-authoritative read
+  models materialized over the operation log for dashboards and host indexes.
+
+Only authoritative domain facts satisfy waits. Derived projections must never
+become wait-authoritative or affect replay; doing so would let a read model drive
+execution. Conformance proves `waitForState` resolves only on authoritative
+domain facts and never on a derived projection collection.
+
+This covers `effect-execution.BOUNDARY.6`, `effect-execution.INVOCATION.9`, and
+`effect-execution.CONFORMANCE.36`.
+
+### Awakeable and deferred settle-once lowering
+
+Settle-once must hold across processes, not just within one activation. The two
+primitives lower differently:
+
+- **awakeable** uses a dedicated stream settled by an atomic append-and-close.
+  Closure monotonicity (a closed stream cannot reopen) plus producer idempotence
+  give cross-process settle-once: a second resolution after the settling
+  append-and-close is rejected or ignored.
+- **deferred** is an operation-log fact (`DeferredResolved`/`DeferredRejected`)
+  settled by the epoch-holding executor. Because only the epoch holder may append,
+  the deferred settles once under the single-writer fence.
+
+This makes the two lowerings observably distinct: an awakeable can be settled by
+an external ingress caller via stream closure; a deferred is settled by the
+invocation's own epoch-holding writer through the operation log.
+
+This covers `effect-execution.RESUME.8`, `effect-execution.RESUME.9`,
+`effect-execution.CONFORMANCE.37`, and `effect-execution.CONFORMANCE.41`.
+
+### Step idempotency key derivation
+
+Step idempotency keys auto-derive from `${invocationId}:${stepKey}`. This is the
+default external-effect dedupe identity and is stable across replays because both
+components are stable. A caller override exists only to match an external API's
+required idempotency-key format; an override must also be stable across replay
+(derive it from invocation/step identity, not from wall-clock or random input).
+
+This covers `effect-execution.API.32` and `effect-execution.CONFORMANCE.38`.
+
+### Channel-coordinated fibers re-run on replay
+
+`channel` coordinates local routines and appends no operation-log event. Those
+routines therefore re-run on every replay activation. Any side effect inside a
+channel-coordinated routine must itself go through keyed `run`, or replay
+duplicates it. The caution fixture proves a bare side effect inside a
+channel-coordinated fiber duplicates across replays while the same side effect
+wrapped in `run` executes once.
+
+This covers `effect-execution.API.33` and `effect-execution.CONFORMANCE.39`.
+
+### Single-writer epoch claim is compare-and-set
+
+Producer-epoch auto-claim must be compare-and-set. Producer epoch is the
+correctness fence (stale appends are rejected); subscription lease/generation is
+the liveness fence. Stale-append rejection alone does not prevent two executors
+from repeatedly out-claiming each other's epoch (epoch ping-pong / livelock).
+Forward progress under contention requires a single-claimant lease so exactly one
+executor holds the right to claim and append at a time.
+
+This covers `effect-execution.DELIVERY.9` and `effect-execution.CONFORMANCE.40`.
+
+### Performance budget and operation-log binding
+
+A per-step durable append over remote HTTP is one round-trip plus an fsync, and
+sequential durable steps do not batch. The package must not hide this cost. Two
+acceptable answers:
+
+- support an in-process or co-located `OperationLog` binding for latency-sensitive
+  hosts (the same `OperationLog` adapter contract, bound to a local store rather
+  than remote HTTP); or
+- explicitly budget the remote per-step cost in host guidance.
+
+Because the runtime depends on the `OperationLog` abstraction, both a remote
+Durable Streams binding and an in-process binding must satisfy the same contract.
+Conformance proves the adapter contract holds for both, so execution correctness
+is decoupled from remote transport.
+
+This covers `effect-execution.BOUNDARY.7` and `effect-execution.CONFORMANCE.42`.
+
 ## Conformance strategy
 
 Execution conformance should live under:
@@ -1165,6 +1343,15 @@ effect execution / local composition
 effect execution / resume primitives
 effect execution / tutorial surface
 effect execution / client-server integration
+effect execution / replay checkpoints
+effect execution / body determinism
+effect execution / durable select
+effect execution / state replay semantics
+effect execution / settle-once lowering
+effect execution / step idempotency keys
+effect execution / channel re-run caution
+effect execution / single-writer epoch claim
+effect execution / operation log binding parity
 ```
 
 Minimum conformance cases:
@@ -1216,9 +1403,27 @@ Minimum conformance cases:
 - webhook-originated durable facts resume matching waits only after the append is
   durable;
 - sleep, signal, awakeable, deferred, state-change wait, and channel keep
-  distinct identity, scope, durability, and completion semantics; and
-- tutorial deferred-surface entries name their owner layer and substrate
-  dependency.
+  distinct identity, scope, durability, and completion semantics;
+- snapshot-based replay from a checkpoint watermark applies only the tail delta
+  and reconstructs the same runtime state as a full-log fold;
+- a non-deterministic value produced outside `run` is detected as replay-unsafe
+  body divergence;
+- `select` over durable waits resolves to the earliest operation-log offset and
+  is deterministic across replays;
+- `state()` writes replay deterministically from operation-log facts and
+  `waitForState` replay returns the value frozen into `StateWaitSatisfied`;
+- `waitForState` resolves only on authoritative domain facts, never on derived
+  execution-metadata projections;
+- an awakeable resolution after the settling append-and-close is rejected, and a
+  deferred is settled as an operation-log fact by the epoch holder;
+- the default step idempotency key is `${invocationId}:${stepKey}`, stable across
+  replays, and an override is reused verbatim;
+- a side effect inside a channel-coordinated routine runs once across replays only
+  when wrapped in keyed `run`;
+- producer-epoch auto-claim is compare-and-set and concurrent claimants need a
+  single-claimant lease to make progress; and
+- the `OperationLog` adapter contract is satisfied by both a remote Durable
+  Streams binding and an in-process binding.
 
 The integration suite should run against the Effect client and a conformant
 Effect server when those packages are available. Until then, substrate-free tests
@@ -1265,7 +1470,24 @@ This covers `effect-execution.CONFORMANCE.1` through
 20. Add saga and cancellation authoring policy.
 21. Add tutorial conformance so deferred-surface rows either become implemented
     or clearly remain host-level policy.
+22. Add body-determinism conformance and the divergence-detection contract.
+23. Add durable `select` earliest-offset conformance before any durable race
+    helper ships.
+24. Add `state()`/`waitForState` replay-freeze conformance once state lowering
+    lands.
+25. Add awakeable append-and-close and deferred operation-log settle-once
+    conformance once the client exposes atomic append-and-close.
+26. Add step idempotency-key derivation conformance.
+27. Add channel re-run caution conformance.
+28. Add compare-and-set epoch-claim and single-claimant-lease conformance once
+    the client/server expose CAS epoch claim and lease primitives.
+29. Add replay-checkpoint/snapshot conformance and the `operationLogWatermark`
+    checkpoint contract before long-running invocations are supported.
+30. Add in-process `OperationLog` binding parity conformance and a host
+    performance budget note for the remote per-step append cost.
 
 This order keeps the execution package thin: every durable substrate primitive
 lands in the server and client first, then execution lowers a fluent authoring
-helper onto it.
+helper onto it. Items 22 through 30 are the review-addendum contracts; the
+matching conformance suites land red and turn green as the client/server
+substrate primitives they depend on are advertised.
