@@ -10,8 +10,9 @@
  * the requested offset and keeps offsets per-stream monotonic with no global
  * counter.
  */
-import { Effect, Layer, Option, STM, TMap } from "effect"
+import { Effect, Layer, Option, Schema, STM, TMap } from "effect"
 import * as ProtocolError from "./ProtocolError.ts"
+import { UintFromString } from "./schema.ts"
 import * as Store from "./Store.ts"
 
 interface ProducerState {
@@ -325,14 +326,19 @@ const makeStore = (state: MemoryState): Store.StoreShape => {
     ).pipe(
       Effect.flatMap((rec) => {
         const tail = rec.bytes.length
-        // `-1` is the begin sentinel; any other value is a byte offset.
-        const start = offset === "-1" ? 0 : Number.parseInt(offset, 10)
-        if (Number.isNaN(start) || start < 0 || start > tail) {
+        // `-1` is the begin sentinel; any other value is a byte offset decoded
+        // through the shared `UintFromString` Schema (no hand-written numeric
+        // parsing — effect-server.TOOLING.1).
+        const decoded =
+          offset === "-1"
+            ? Option.some(0)
+            : Schema.decodeOption(UintFromString)(offset)
+        if (Option.isNone(decoded) || decoded.value > tail) {
           return Effect.fail(
             new ProtocolError.BadRequest({ reason: `invalid offset: ${offset}` })
           )
         }
-        const body = rec.bytes.slice(start)
+        const body = rec.bytes.slice(decoded.value)
         return Effect.succeed({
           path,
           contentType: rec.contentType,

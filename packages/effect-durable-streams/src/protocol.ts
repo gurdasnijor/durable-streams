@@ -7,6 +7,7 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import { Effect, Option, Schema } from "effect"
 import * as ProtocolError from "./ProtocolError.ts"
+import { UintFromString } from "./schema.ts"
 import * as Store from "./Store.ts"
 import {
   PRODUCER_EPOCH,
@@ -31,20 +32,6 @@ const normalizeContentType = (ct: string | undefined): string => {
   if (!ct) return ""
   return ct.split(";")[0]!.trim().toLowerCase()
 }
-
-/**
- * A strict non-negative producer-header integer as a `Schema`: digits only (no
- * sign/exponent/whitespace), a safe integer. Decoding a malformed header yields
- * `Option.none` so the caller can map it to a `400`.
- */
-const StrictUint = Schema.compose(
-  Schema.String.pipe(Schema.pattern(/^\d+$/)),
-  Schema.NumberFromString
-).pipe(
-  Schema.int(),
-  Schema.nonNegative(),
-  Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER)
-)
 
 const headerValue = (
   headers: Record<string, string | undefined>,
@@ -97,8 +84,8 @@ const normalizeJsonAppendBody = (
  */
 const ProducerHeaders = Schema.Struct({
   id: Schema.optional(Schema.String).pipe(Schema.fromKey(REQ_PRODUCER_ID)),
-  epoch: Schema.optional(StrictUint).pipe(Schema.fromKey(REQ_PRODUCER_EPOCH)),
-  seq: Schema.optional(StrictUint).pipe(Schema.fromKey(REQ_PRODUCER_SEQ)),
+  epoch: Schema.optional(UintFromString).pipe(Schema.fromKey(REQ_PRODUCER_EPOCH)),
+  seq: Schema.optional(UintFromString).pipe(Schema.fromKey(REQ_PRODUCER_SEQ)),
 })
 const decodeProducerHeaders = Schema.decodeUnknown(ProducerHeaders)
 
