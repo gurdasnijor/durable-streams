@@ -1,20 +1,47 @@
 /**
- * Route composition. The raw stream data plane is hand-routed through
- * `HttpRouter` because it needs raw bytes and protocol headers (HTTP_API.4).
+ * Server construction. Composes the stream `Router` with the memory `Store` and
+ * a Node HTTP server into a launchable Effect `Layer`. Swapping persistence is
+ * changing the provided store layer, not the route code (STORE.1).
  *
- * The wildcard `/v1/stream/*` carries the FULL slash-containing stream path; the
- * reserved-path guard lives in the handlers (`StreamRoutes.resolvePath`). The
- * SDD's `__ds` control plane (HttpApi) is not part of this memory-store slice —
- * an unmatched `/v1/stream/__ds/*` is rejected by the guard, never creating a
- * user stream (HTTP.7 / CONFORMANCE.9).
+ * (Route composition lives in `routes/Router.ts`; this module owns the server
+ * layer and launch surface.)
  */
-import { HttpRouter } from "@effect/platform"
-import * as StreamRoutes from "./routes/StreamRoutes.ts"
+import { createServer } from "node:http"
+import { HttpMiddleware, HttpServer } from "@effect/platform"
+import { NodeHttpServer } from "@effect/platform-node"
+import { Effect, Layer } from "effect"
+import * as AppConfig from "./Config.ts"
+import * as MemoryStore from "./MemoryStore.ts"
+import { router } from "./routes/Router.ts"
 
-export const router = HttpRouter.empty.pipe(
-  HttpRouter.put("/v1/stream/*", StreamRoutes.create),
-  HttpRouter.post("/v1/stream/*", StreamRoutes.append),
-  HttpRouter.head("/v1/stream/*", StreamRoutes.head),
-  HttpRouter.get("/v1/stream/*", StreamRoutes.read),
-  HttpRouter.del("/v1/stream/*", StreamRoutes.remove)
-)
+export interface ServerOptions {
+  readonly port: number
+}
+
+/** The launchable HTTP server `Layer` over the memory store. */
+export const layer = (options: ServerOptions) =>
+  HttpServer.serve(HttpMiddleware.logger)(router).pipe(
+    Layer.provide(MemoryStore.layer),
+    Layer.provide(NodeHttpServer.layer(createServer, { port: options.port }))
+  )
+
+/** Launch the server, reading the port from `Config`. */
+export const launch = Effect.gen(function* () {
+  const port = yield* AppConfig.port
+  yield* Layer.launch(layer({ port }))
+})
+
+/**
+ * Start the server in the current `Scope` and return its bound `Address`. This
+ * is the programmatic/embedding surface (also used by tests to boot the real
+ * server on an ephemeral port); closing the scope shuts the server down.
+ */
+export const start = (options: ServerOptions) =>
+  Effect.gen(function* () {
+    yield* HttpServer.serveEffect(router, HttpMiddleware.logger)
+    const server = yield* HttpServer.HttpServer
+    return server.address
+  }).pipe(
+    Effect.provide(MemoryStore.layer),
+    Effect.provide(NodeHttpServer.layer(createServer, { port: options.port }))
+  )

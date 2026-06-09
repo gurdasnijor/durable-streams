@@ -14,14 +14,15 @@
  */
 import { runConformanceTests } from "@durable-streams/server-conformance-tests"
 import { afterAll, beforeAll, describe } from "vitest"
-import { startServer, type Running } from "../support/server.ts"
+import { startServer } from "../support/start-server.ts"
+import type { Running } from "../support/start-server.ts"
 
-const options = { baseUrl: "", subscriptions: false }
+const options = { baseUrl: ``, subscriptions: false }
 let server: Running
 
-const suite = process.env.RUN_CONFORMANCE === "1" ? describe : describe.skip
+const suite = process.env.RUN_CONFORMANCE === `1` ? describe : describe.skip
 
-suite("effect server conformance (memory)", () => {
+suite(`effect server conformance (memory)`, () => {
   beforeAll(async () => {
     server = await startServer()
     options.baseUrl = server.baseUrl
