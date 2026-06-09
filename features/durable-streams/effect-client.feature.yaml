@@ -55,6 +55,12 @@ components:
       6: "Producer recovery derives sequence from explicit producer protocol state or claims a fresh epoch; it never derives sequence from collected event count or stream offsets."
       7: "Producer resources are acquired from `DurableStreamClient` stream handles rather than a separate top-level constructor."
       8: "JSON single-event append and multi-event batch append are distinct public methods so array-valued events cannot be mistaken for batches."
+      9: "Producer sends emit Effect-native tracing spans or events for producer id, epoch, producer sequence, append outcome, duplicate/gap/closed/fenced decisions, and bounded auto-claim attempts."
+      10: "Producer telemetry does not attach raw stream paths by default; low-cardinality stream identity is route/category data or an explicit caller-provided observability name."
+  OBSERVABILITY:
+    requirements:
+      1: "Client producer telemetry composes with server OpenTelemetry spans so production traces can correlate client producer decisions with server append and producer-validation decisions."
+      2: "Producer-plane behavioral assertions use real telemetry or production OperationLog/server seams rather than test-only fetch recorders."
   COORDINATION:
     requirements:
       1: "Subscription creation and stream membership helpers wrap generated control-plane endpoints without owning server state."

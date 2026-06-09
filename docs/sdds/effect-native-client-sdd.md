@@ -529,6 +529,58 @@ flushing, local closed state, and any heartbeat/recovery resources needed by the
 implementation. This covers `effect-client.PRODUCER.1` through
 `effect-client.PRODUCER.7`.
 
+### Producer observability
+
+Producer-plane instrumentation belongs in
+`packages/effect-durable-client/src/protocol/Producer.ts`, around the serialized
+`sendBatch` attempt loop. The lower HTTP layer already emits generic request
+spans and retry events; it does not know whether a `POST` is a producer accept,
+duplicate, stale epoch, sequence gap, closed-stream decision, or bounded
+auto-claim retry. The producer protocol layer owns that state and is the only
+place that can emit accurate domain telemetry.
+
+The production span should be an Effect-native client span, for example
+`durable_streams.producer.send`, wrapping one wire producer send attempt. It
+should carry protocol attributes that are useful when joined with server OTel:
+
+- `durable_streams.producer.id`;
+- `durable_streams.producer.epoch`;
+- `durable_streams.producer.seq`;
+- `durable_streams.producer.batch_size`;
+- `durable_streams.producer.auto_claim_attempt`;
+- `durable_streams.producer.outcome`, using a bounded set such as `accepted`,
+  `duplicate`, `closed`, `fenced`, `gap`, `conflict`, `missing`, or
+  `transport_error`; and
+- `durable_streams.stream.name` only when the caller supplies an explicit
+  low-cardinality observability name.
+
+Raw stream paths and payload values should not be attached by default. Stream
+paths are user address data and may be high-cardinality or sensitive. Until the
+client has an explicit low-cardinality naming option, producer spans should use
+route/category information such as `durable_streams.stream.address_kind`
+(`absolute_url` / `relative_path`) and omit the concrete path. If a future
+option adds a caller-provided stream observability name, it must be documented as
+low-cardinality and safe for telemetry cardinality budgets.
+
+Decision events can make the span useful without adding new span names:
+
+- `durable_streams.producer.accepted` after a 200 response and state advance;
+- `durable_streams.producer.duplicate` after a 204 duplicate success and state
+  advance;
+- `durable_streams.producer.auto_claim` when a 403 bumps epoch and retries;
+- `durable_streams.producer.fenced` when stale epoch surfaces to the caller;
+- `durable_streams.producer.gap` when 409 sequence-gap details surface; and
+- `durable_streams.producer.closed` when the server reports closed stream.
+
+This is production observability, not a conformance shim. Execution conformance
+that needs producer-plane assertions should consume real Effect telemetry,
+server append / producer-validation spans, or the production `OperationLog` /
+server seams. It should not introduce a test-only fetch recorder that shadows
+the client transport and proves behavior outside the real telemetry path.
+
+This covers `effect-client.PRODUCER.9`, `effect-client.PRODUCER.10`,
+`effect-client.OBSERVABILITY.1`, and `effect-client.OBSERVABILITY.2`.
+
 ## Coordination plane
 
 Subscription and lease APIs are semantic wrappers over generated control-plane
