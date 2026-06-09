@@ -839,6 +839,40 @@ External side effects require one of:
 This covers `effect-execution.DELIVERY.1` through
 `effect-execution.DELIVERY.5`.
 
+## Colocated SQL host activation
+
+The portable activation transport remains pull-wake or another explicit
+server/client coordination primitive. A host that is colocated with the
+SQL/PGlite store can use a narrower internal path: observe derived ready-work
+tables through live query or changefeed APIs and then run the same activation
+protocol.
+
+```text
+SQL/PGlite store commits wake or state change
+  -> derived ready_invocations / wake_snapshots row changes
+  -> host observes via live.changes or live query
+  -> host claims the activation in a transaction
+  -> host replays the operation log to tail
+  -> host evaluates missing work
+  -> host records outcome or suspension intent
+  -> host marks the ready row complete only after durability
+```
+
+This can shrink the `effect-durable-streams <-> host` wiring for colocated
+deployments because the host does not need to poll the external pull-wake HTTP
+endpoint. It does not change execution correctness:
+
+- the operation log remains authoritative;
+- activation still replays before running user code;
+- producer epoch and producer sequence still fence operation-log writes; and
+- the host still cannot ack or clear ready work until the durable outcome or
+  suspension intent exists.
+
+Remote workers and clients still use pull-wake, webhook, long-poll, SSE, or the
+ordinary Durable Streams protocol surface. SQL live queries are an optimized
+host activation transport, not a replacement for the public substrate. This
+covers `effect-execution.DELIVERY.8`.
+
 ## Single-writer invocation fencing
 
 For the durable execution engine, prefer a single-writer-per-invocation

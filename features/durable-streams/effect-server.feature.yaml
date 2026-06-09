@@ -39,6 +39,8 @@ components:
       10: "The lower ordered key-value driver exposes point reads/writes, ordered range scans, and synchronous transaction callbacks; it does not run arbitrary `Effect` values inside storage transactions."
       11: "The first durable backend target is an LMDB ordered key-value driver wrapped in an Effect scoped layer."
       12: "`@effect/platform` `KeyValueStore` may be exposed as a narrow compatibility adapter, but it is not sufficient for the core Durable Streams server store."
+      13: "The preferred strategic durable backend shape is SQL/Postgres-compatible storage, with PGlite or an equivalent embedded Effect SQL layer as the first local SQL target; LMDB remains an interim adapter or spike."
+      14: "A SQL-shaped store can update authoritative append-log tables and derived query tables in one transaction so colocated host components can observe ready work without changing protocol correctness."
   PRODUCERS:
     requirements:
       1: "Producer validation treats duplicate producer appends as successful protocol control flow."
@@ -63,6 +65,8 @@ components:
       4: "The notification transport is an explicit layer that can wake waiters across processes for durable multi-node backends."
       5: "Wake evaluation treats notification offsets as hints and re-reads durable tail state before deciding pending work."
       6: "Wake evaluation scans durable stream records from each linked subscription's evaluated cursor to the current durable tail and records wake snapshots for matching records without advancing the public ack cursor."
+      7: "For colocated SQL/PGlite deployments, live SQL query or changefeed observation may be used as an optimized host activation transport over derived ready-work tables, while pull-wake remains the portable external protocol."
+      8: "SQL CEL pushdown is capability-detected: when a backend exposes a CEL evaluator such as pg-cel the wake evaluator may push predicates into SQL, otherwise it falls back to server-side Effect CEL evaluation with the same wake decisions."
   SUBSCRIPTIONS:
     requirements:
       1: "Subscription create, read, delete, stream membership, webhook callback, pull-wake claim, ack, and release are implemented under `__ds/subscriptions`."
