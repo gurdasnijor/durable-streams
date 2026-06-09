@@ -30,7 +30,7 @@ components:
       7: Deterministic target append rejection records failed schedule status instead of retrying forever.
   CLIENT:
     requirements:
-      1: "`effect-durable-streams` exposes typed Effect bindings that preserve reserved subscription and schedule protocol semantics."
+      1: "`effect-durable-client` exposes typed Effect bindings that preserve reserved subscription and schedule protocol semantics."
       2: Effect client helpers must not import server internals.
       3: Effect client helpers must not own a scheduler, predicate index, or dedupe store.
       4: Effect client bindings must not own heartbeat policy, handler lifecycle, worker pooling, or retry loops.
@@ -52,7 +52,7 @@ components:
   CONFORMANCE:
     requirements:
       1: Portable server behavior coverage lives in `packages/server-conformance-tests`.
-      2: "Effect client conformance coverage lives in `packages/effect-durable-streams/test/conformance`."
+      2: "Effect client conformance coverage lives in `packages/effect-durable-client/test/conformance`."
       3: Effect client conformance tests prove the public Effect API drives a real server correctly.
       4: Effect client conformance tests must not duplicate every server edge case.
       5: Effect client conformance tests must not validate worker-loop or durable-execution policy.

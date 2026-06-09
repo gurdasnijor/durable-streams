@@ -10,7 +10,7 @@ owns the durable substrate semantics.
 This package should stay thin enough that changes to durable scheduling,
 predicate wake-up, cursor fencing, and commit-once append behavior land in the
 Durable Streams protocol, server, conformance tests, and
-`effect-durable-streams` client first.
+`effect-durable-client` client first.
 
 ## Package Boundaries
 
@@ -18,7 +18,7 @@ Durable Streams protocol, server, conformance tests, and
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | `packages/server`                   | Protocol implementation for streams, subscriptions, schedules, filters, leases, producer fencing | Application authoring syntax                         |
 | `packages/server-conformance-tests` | Portable behavior coverage for substrate capabilities                                            | Package-specific runtime assumptions                 |
-| `packages/effect-durable-streams`   | Thin Effect client for protocol and coordination endpoints                                       | A second scheduler, predicate index, or dedupe store |
+| `packages/effect-durable-client`    | Thin Effect client for protocol and coordination endpoints                                       | A second scheduler, predicate index, or dedupe store |
 | `packages/effect-durable-execution` | Authoring primitives and lowering rules                                                          | Durable substrate state machines                     |
 
 ## Current Surface
@@ -55,7 +55,7 @@ append ordering, producer fencing, and duplicate classification.
 Durable sleep should not be implemented with a runtime-local timer heap. The
 intended lowering is:
 
-1. create a scheduled append for a timer fact through `effect-durable-streams`;
+1. create a scheduled append for a timer fact through `effect-durable-client`;
 2. wait for that timer fact through a filtered or pull-wake subscription; and
 3. resume after the subscription wake is claimed and acked.
 
@@ -93,7 +93,7 @@ When adding a durable primitive, use this order:
 1. update `PROTOCOL.md`;
 2. add or update `packages/server-conformance-tests` coverage;
 3. implement the server substrate capability;
-4. expose the capability through `packages/effect-durable-streams`; and
+4. expose the capability through `packages/effect-durable-client`; and
 5. lower `packages/effect-durable-execution` authoring primitives onto that
    client capability.
 
