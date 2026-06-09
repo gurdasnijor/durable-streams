@@ -91,8 +91,9 @@ Do not claim these from PR #10:
 
 - PR #7 remains open for execution conformance work.
 - PR #8 remains open for producer observability placement documentation.
-- `codex/strict-tooling-followup` remains an unmerged branch with stricter
-  tooling/diagnostics follow-up. It is not a stale PR #10 branch.
+- Draft PR #11 tracks the stricter tooling/diagnostics follow-up from
+  `codex/strict-tooling-followup`. It is visible for morning review and is not a
+  stale PR #10 branch.
 
 Suggested next server milestones:
 
