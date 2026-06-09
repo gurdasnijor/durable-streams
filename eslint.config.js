@@ -102,6 +102,48 @@ const localPlugin = {
         }
       },
     },
+    "server-file-exports-server": {
+      meta: {
+        type: `problem`,
+        docs: {
+          description: `Keep effect-durable-streams server module names aligned with their exported abstraction.`,
+        },
+        messages: {
+          noRouterExport:
+            `effect-server.TOOLING.3: Server.ts must export server construction or layers; move router composition to Router.ts or routes/*.ts.`,
+        },
+        schema: [],
+      },
+      create(context) {
+        const reportIfRouter = (node, name) => {
+          if (name === `router`) {
+            context.report({ node, messageId: `noRouterExport` })
+          }
+        }
+
+        return {
+          ExportNamedDeclaration(node) {
+            const declaration = node.declaration
+            if (declaration?.type === `VariableDeclaration`) {
+              for (const item of declaration.declarations) {
+                if (item.id.type === `Identifier`) {
+                  reportIfRouter(item.id, item.id.name)
+                }
+              }
+            }
+            if (declaration?.type === `FunctionDeclaration` && declaration.id) {
+              reportIfRouter(declaration.id, declaration.id.name)
+            }
+            for (const specifier of node.specifiers) {
+              const exported = specifier.exported
+              if (exported.type === `Identifier`) {
+                reportIfRouter(exported, exported.name)
+              }
+            }
+          },
+        }
+      },
+    },
   },
 }
 
@@ -166,6 +208,12 @@ export default [
     files: [`packages/effect-durable-streams/src/**/*.ts`],
     rules: {
       "local/schema-protocol-boundaries": `error`,
+    },
+  },
+  {
+    files: [`packages/effect-durable-streams/src/Server.ts`],
+    rules: {
+      "local/server-file-exports-server": `error`,
     },
   },
   {

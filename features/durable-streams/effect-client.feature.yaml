@@ -92,3 +92,6 @@ constraints:
   SCHEMA:
     requirements:
       1: "Every public durable wire boundary accepts only discharged Effect schemas whose context requirement is `never`; schemas may use services while being constructed, but encode, decode, and replay cannot require live services."
+  TOOLING:
+    requirements:
+      1: "The Effect client package composes its TypeScript config from the repository root strict Effect language-service settings instead of maintaining a weaker package-local diagnostics configuration."

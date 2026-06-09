@@ -16,11 +16,12 @@ export interface LmdbOptions {
 
 const copy = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes)
 
-const driverError = (
-  operation: StoreDriverError[`operation`]
-): ((cause: unknown) => StoreDriverError) => {
-  return (cause) => new StoreDriverError({ operation, cause })
-}
+const driverError =
+  (
+    operation: StoreDriverError[`operation`]
+  ): ((cause: unknown) => StoreDriverError) =>
+  (cause) =>
+    new StoreDriverError({ operation, cause })
 
 const scanSync = (
   db: Database<Uint8Array, Uint8Array>,

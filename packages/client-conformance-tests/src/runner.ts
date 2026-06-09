@@ -1356,7 +1356,7 @@ async function runTestCase(
       }
 
       // Validate expectations
-      if (result && `expect` in op && op.expect) {
+      if (result && `expect` in op) {
         const validationError = validateExpectation(
           result,
           op.expect as Record<string, unknown>

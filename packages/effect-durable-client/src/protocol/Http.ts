@@ -239,7 +239,7 @@ const applyParams = (
   req: HttpClientRequest.HttpClientRequest,
   params: Record<string, string> | undefined
 ): HttpClientRequest.HttpClientRequest => {
-  if (!params) return req
+  if (params === undefined) return req
   let out = req
   const entries = Object.entries(params)
   let index = 0
@@ -265,14 +265,14 @@ const withOnErrorHandler = <A, E, R>(
   attempt: (ep: Endpoint) => Effect.Effect<A, E, R>
 ): Effect.Effect<A, E, R> => {
   const handler = endpoint.onError
-  if (!handler) return attempt(endpoint)
+  if (handler === undefined) return attempt(endpoint)
   const cap = endpoint.onErrorMaxRetries ?? 4
   const loop = (ep: Endpoint, attemptsLeft: number): Effect.Effect<A, E, R> =>
     attempt(ep).pipe(
       Effect.catchAll((err) => {
         if (attemptsLeft <= 0) return Effect.fail(err)
         return Effect.flatMap(handler(err), (retry) => {
-          if (!retry) return Effect.fail(err)
+          if (retry === undefined) return Effect.fail(err)
           const merged: Endpoint = {
             ...ep,
             headers: { ...(ep.headers ?? {}), ...(retry.headers ?? {}) },
@@ -606,7 +606,8 @@ export const getStream = (
   withOnErrorHandler(endpoint, (ep) =>
     Effect.gen(function* () {
       const url = urlOf(ep)
-      const extra = opts.accept ? { accept: opts.accept } : undefined
+      const extra =
+        opts.accept !== undefined ? { accept: opts.accept } : undefined
       const res = yield* executeGet(
         ep,
         {
@@ -666,7 +667,7 @@ const postInner = (
       extra[C.PRODUCER_EPOCH] = String(opts.producerEpoch)
     if (opts.producerSeq !== undefined)
       extra[C.PRODUCER_SEQ] = String(opts.producerSeq)
-    if (opts.streamClosed) extra[C.STREAM_CLOSED] = `true`
+    if (opts.streamClosed === true) extra[C.STREAM_CLOSED] = `true`
     // Retry transport errors only. Protocol errors (4xx) are returned to the caller.
     const res = yield* executeWithRetry(
       endpoint,
@@ -734,7 +735,7 @@ const putInner = (
       extra[C.STREAM_TTL] = String(opts.ttlSeconds)
     if (opts.expiresAt !== undefined)
       extra[C.STREAM_EXPIRES_AT] = opts.expiresAt
-    if (opts.closed) extra[C.STREAM_CLOSED] = `true`
+    if (opts.closed === true) extra[C.STREAM_CLOSED] = `true`
     const ct = opts.contentType ?? C.CONTENT_TYPE_JSON
     const res = yield* executeWithRetry(
       endpoint,

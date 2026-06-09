@@ -33,7 +33,7 @@
     "access": "public"
   },
   "scripts": {
-    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.diagnostics.json --strict",
     "overview": "effect-language-service overview --project tsconfig.json",
     "build": "tsc",
     "check": "pnpm run typecheck && pnpm run test",
