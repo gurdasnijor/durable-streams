@@ -19,6 +19,10 @@ const alias = {
     __dirname,
     "./packages/effect-durable-execution/src"
   ),
+  "effect-durable-client": path.resolve(
+    __dirname,
+    "./packages/effect-durable-client/src"
+  ),
   "effect-durable-streams": path.resolve(
     __dirname,
     "./packages/effect-durable-streams/src"
@@ -122,6 +126,14 @@ export default defineConfig({
         test: {
           name: "effect-durable-execution",
           include: ["packages/effect-durable-execution/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: { alias },
+      }),
+      defineProject({
+        test: {
+          name: "effect-durable-streams",
+          include: ["packages/effect-durable-streams/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
         },
         resolve: { alias },

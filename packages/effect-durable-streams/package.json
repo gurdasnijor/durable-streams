@@ -1,7 +1,7 @@
 {
   "name": "effect-durable-streams",
   "version": "0.0.0",
-  "description": "Effect-native client for the Durable Streams Protocol: Stream-shaped reads, Sink-shaped writes, schema-validated decode/encode boundaries.",
+  "description": "Effect-native Durable Streams server implementation.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -10,42 +10,32 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./storage": {
+      "types": "./src/storage/index.ts",
+      "default": "./src/storage/index.ts"
     }
   },
   "files": [
     "src",
-    "docs",
     "README.md"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "overview": "effect-language-service overview --project tsconfig.json",
     "build": "tsc",
     "check": "pnpm run typecheck && pnpm run test",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:unit": "vitest run test/unit",
-    "test:conformance": "vitest run test/conformance",
-    "bench": "vitest bench --run test/bench",
+    "test": "vitest run --root ../.. --project effect-durable-streams",
     "typecheck": "tsc --noEmit"
   },
-  "peerDependencies": {
-    "@effect/platform": "^0.96.0",
-    "effect": "^3.18.0"
-  },
   "dependencies": {
-    "eventsource-parser": "^3.0.0"
+    "@effect/platform": "^0.96.1",
+    "effect": "^3.21.2",
+    "lmdb": "^3.4.4"
   },
   "devDependencies": {
-    "@durable-streams/client": "workspace:*",
-    "@durable-streams/server": "workspace:*",
-    "@effect/platform": "^0.96.1",
     "@types/node": "^22.10.0",
-    "effect": "^3.21.2",
-    "expect-type": "^1.1.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }

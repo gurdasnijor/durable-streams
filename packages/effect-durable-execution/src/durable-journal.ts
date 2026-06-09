@@ -1,10 +1,10 @@
 import { Effect, Layer, Ref } from "effect"
-import { DurableStream } from "effect-durable-streams"
+import { DurableStream } from "effect-durable-client"
 import { DurableExecutionError } from "./error.ts"
 import { FencedWriter, Journal, SessionStream, makeJournal } from "./journal.ts"
 import { JournalEventSchema } from "./schema.ts"
 import type { DurableExecutionRequirements, JournalEvent } from "./schema.ts"
-import type { Endpoint } from "effect-durable-streams"
+import type { Endpoint } from "effect-durable-client"
 
 interface DurableJournalOptions {
   readonly endpoint: Endpoint

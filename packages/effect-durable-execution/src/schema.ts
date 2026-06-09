@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { HttpClient } from "@effect/platform"
-import type { Endpoint } from "effect-durable-streams"
+import type { Endpoint } from "effect-durable-client"
 
 const StepSucceededEventSchema = Schema.Struct({
   type: Schema.Literal(`StepSucceeded`),

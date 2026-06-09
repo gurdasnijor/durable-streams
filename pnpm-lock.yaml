@@ -533,29 +533,7 @@ importers:
 
   packages/client-py: {}
 
-  packages/effect-durable-execution:
-    dependencies:
-      effect:
-        specifier: ^3.21.2
-        version: 3.21.3
-      effect-durable-streams:
-        specifier: workspace:*
-        version: link:../effect-durable-streams
-    devDependencies:
-      '@effect/platform':
-        specifier: ^0.96.1
-        version: 0.96.1(effect@3.21.3)
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.3
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
-
-  packages/effect-durable-streams:
+  packages/effect-durable-client:
     dependencies:
       eventsource-parser:
         specifier: ^3.0.0
@@ -579,6 +557,50 @@ importers:
       expect-type:
         specifier: ^1.1.0
         version: 1.3.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/effect-durable-execution:
+    dependencies:
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+      effect-durable-client:
+        specifier: workspace:*
+        version: link:../effect-durable-client
+    devDependencies:
+      '@effect/platform':
+        specifier: ^0.96.1
+        version: 0.96.1(effect@3.21.3)
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/effect-durable-streams:
+    dependencies:
+      '@effect/platform':
+        specifier: ^0.96.1
+        version: 0.96.1(effect@3.21.3)
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+      lmdb:
+        specifier: ^3.4.4
+        version: 3.4.4
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.3
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
