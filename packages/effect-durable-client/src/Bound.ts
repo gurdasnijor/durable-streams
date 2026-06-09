@@ -5,7 +5,7 @@ import type { Bound, Endpoint } from "./DurableStream.ts"
 
 interface DefineOptions<A, I> {
   readonly endpoint: Endpoint
-  readonly schema: Schema.Schema<A, I>
+  readonly schema: Schema.Schema<A, I, never>
 }
 
 export const define = <A, I>(opts: DefineOptions<A, I>): Bound<A, I> => {
@@ -31,6 +31,16 @@ export const define = <A, I>(opts: DefineOptions<A, I>): Bound<A, I> => {
         endpoint,
         schema,
         event,
+        ...(appendOpts?.seq !== undefined ? { seq: appendOpts.seq } : {}),
+        ...(appendOpts?.headers !== undefined
+          ? { headers: appendOpts.headers }
+          : {}),
+      }),
+    appendBatch: (events, appendOpts) =>
+      Writer.appendBatch({
+        endpoint,
+        schema,
+        events,
         ...(appendOpts?.seq !== undefined ? { seq: appendOpts.seq } : {}),
         ...(appendOpts?.headers !== undefined
           ? { headers: appendOpts.headers }

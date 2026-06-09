@@ -10,6 +10,18 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./ApiClient": {
+      "types": "./src/ApiClient.ts",
+      "default": "./src/ApiClient.ts"
+    },
+    "./CEL": {
+      "types": "./src/CEL.ts",
+      "default": "./src/CEL.ts"
+    },
+    "./Subscription": {
+      "types": "./src/Subscription.ts",
+      "default": "./src/Subscription.ts"
     }
   },
   "files": [
@@ -37,6 +49,7 @@
     "effect": "^3.18.0"
   },
   "dependencies": {
+    "durable-streams-protocol": "workspace:*",
     "eventsource-parser": "^3.0.0"
   },
   "devDependencies": {

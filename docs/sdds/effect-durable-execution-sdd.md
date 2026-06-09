@@ -566,12 +566,22 @@ const checkout = Effect.gen(function* () {
 })
 ```
 
-Storage persists encoded values, not runtime values. Transport codecs are an
-internal adapter selected by content type and encoded shape. Custom
-serialization is expressed as Schema transformations.
+Public durable execution boundaries accept discharged schemas only:
+
+```ts
+Schema.Schema<A, I, never>
+```
+
+Schemas may use services while user code constructs them, but replay, durable
+decode, durable encode, signal materialization, deferred resolution, and state
+wait materialization cannot require live services. Storage persists encoded
+values, not runtime values. Transport codecs are an internal adapter selected by
+content type and encoded shape. Custom serialization is expressed as Schema
+transformations.
 
 This covers `effect-execution.API.10`, `effect-execution.CONFORMANCE.13`, and
-the replacement for deprecated `effect-execution.USERLAND.3`.
+the replacement for deprecated `effect-execution.USERLAND.3`, plus
+`effect-execution.SCHEMA.1`.
 
 ## `run` and retry policy
 
@@ -579,8 +589,8 @@ the replacement for deprecated `effect-execution.USERLAND.3`.
 
 ```ts
 export interface RunOptions<A, E, EncodedA = unknown, EncodedE = unknown> {
-  readonly output?: Schema.Schema<A, EncodedA>
-  readonly error?: Schema.Schema<E, EncodedE>
+  readonly output?: Schema.Schema<A, EncodedA, never>
+  readonly error?: Schema.Schema<E, EncodedE, never>
   readonly retry?: RetryPolicy
   readonly idempotencyKey?: string
   readonly cancellation?: CancellationPolicy

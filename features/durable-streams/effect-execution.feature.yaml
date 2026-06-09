@@ -138,3 +138,6 @@ constraints:
       2: "Source compatibility with the current `packages/effect-durable-execution` API is subordinate to conformance and the SDD boundary."
       3: "The package must not implement Durable Streams protocol behavior that belongs in `effect-durable-client` or `effect-durable-streams`."
       4: "The package must not become a hosted durable execution engine with its own scheduler, queue, transport server, or persistence backend."
+  SCHEMA:
+    requirements:
+      1: "Every public durable execution serialization boundary accepts only discharged Effect schemas whose context requirement is `never`; schemas may use services while being constructed, but replay cannot require live services."

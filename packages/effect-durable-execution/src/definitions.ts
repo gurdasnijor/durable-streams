@@ -28,8 +28,8 @@ declare const descriptorTypes: unique symbol
 
 export interface HandlerDescriptor<Input = unknown, Output = unknown> {
   readonly _tag: `HandlerDescriptor`
-  readonly input?: Schema.Schema<unknown, unknown>
-  readonly output?: Schema.Schema<unknown, unknown>
+  readonly input?: Schema.Schema<unknown, unknown, never>
+  readonly output?: Schema.Schema<unknown, unknown, never>
   readonly [descriptorTypes]?: {
     readonly input: Input
     readonly output: Output
@@ -96,21 +96,21 @@ const descriptor = <
   EncodedInput = unknown,
   EncodedOutput = unknown,
 >(options?: {
-  readonly input?: Schema.Schema<Input, EncodedInput>
-  readonly output?: Schema.Schema<Output, EncodedOutput>
+  readonly input?: Schema.Schema<Input, EncodedInput, never>
+  readonly output?: Schema.Schema<Output, EncodedOutput, never>
 }): HandlerDescriptor<Input, Output> => ({
   _tag: `HandlerDescriptor`,
   ...(options?.input === undefined
     ? {}
-    : { input: options.input as Schema.Schema<unknown, unknown> }),
+    : { input: options.input as Schema.Schema<unknown, unknown, never> }),
   ...(options?.output === undefined
     ? {}
-    : { output: options.output as Schema.Schema<unknown, unknown> }),
+    : { output: options.output as Schema.Schema<unknown, unknown, never> }),
 })
 
 type SchemaDescriptorOptions<Input, Output, EncodedInput, EncodedOutput> = {
-  readonly input?: Schema.Schema<Input, EncodedInput>
-  readonly output?: Schema.Schema<Output, EncodedOutput>
+  readonly input?: Schema.Schema<Input, EncodedInput, never>
+  readonly output?: Schema.Schema<Output, EncodedOutput, never>
 }
 
 export const json = <Input = void, Output = void>(): HandlerDescriptor<

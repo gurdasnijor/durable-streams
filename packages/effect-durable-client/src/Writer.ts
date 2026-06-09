@@ -14,6 +14,7 @@ import type { ProducerError, WriteError } from "./errors.ts"
 import type { Scope } from "effect"
 import type { HttpClient } from "@effect/platform"
 import type {
+  AppendBatchOpts,
   AppendOpts,
   CloseOptions,
   CreateOptions,
@@ -30,6 +31,11 @@ const encodeSingleJson = <A, I>(
   schema: AppendOpts<A, I>[`schema`],
   event: A
 ): string => JSON.stringify([encodeUnsafe(schema)(event)])
+
+const encodeBatchJson = <A, I>(
+  schema: AppendBatchOpts<A, I>[`schema`],
+  events: ReadonlyArray<A>
+): string => JSON.stringify(events.map((event) => encodeUnsafe(schema)(event)))
 
 const failIfClosed = (res: {
   readonly streamClosed: boolean
@@ -115,6 +121,19 @@ export const append = <A, I>(
 > =>
   appendRaw(opts.endpoint, {
     body: encodeSingleJson(opts.schema, opts.event),
+    ...(opts.seq !== undefined ? { seq: opts.seq } : {}),
+    ...(opts.headers !== undefined ? { headers: opts.headers } : {}),
+  })
+
+export const appendBatch = <A, I>(
+  opts: AppendBatchOpts<A, I>
+): Effect.Effect<
+  { readonly offset: Offset },
+  WriteError,
+  HttpClient.HttpClient
+> =>
+  appendRaw(opts.endpoint, {
+    body: encodeBatchJson(opts.schema, opts.events),
     ...(opts.seq !== undefined ? { seq: opts.seq } : {}),
     ...(opts.headers !== undefined ? { headers: opts.headers } : {}),
   })

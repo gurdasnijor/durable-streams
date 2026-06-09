@@ -533,8 +533,27 @@ importers:
 
   packages/client-py: {}
 
+  packages/durable-streams-protocol:
+    dependencies:
+      '@effect/platform':
+        specifier: ^0.96.1
+        version: 0.96.1(effect@3.21.3)
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/effect-durable-client:
     dependencies:
+      durable-streams-protocol:
+        specifier: workspace:*
+        version: link:../durable-streams-protocol
       eventsource-parser:
         specifier: ^3.0.0
         version: 3.0.6

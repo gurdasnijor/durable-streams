@@ -360,6 +360,11 @@ export const make = <A, I>(
         )
       })
 
+    const appendBatch = (
+      events: ReadonlyArray<A>
+    ): Effect.Effect<void, AnyProducerFailure> =>
+      Effect.forEach(events, append, { discard: true })
+
     const flush: Effect.Effect<void, AnyProducerFailure> = Effect.gen(
       function* () {
         // Drive off `sent.changes` — the stream emits the current value first,
@@ -411,6 +416,7 @@ export const make = <A, I>(
 
     const producer: Producer<A> = Object.assign(sink, {
       append,
+      appendBatch,
       flush,
       restart,
       close,

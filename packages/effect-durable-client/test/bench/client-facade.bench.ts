@@ -39,7 +39,7 @@ afterAll(async () => {
   await server.stop()
 })
 
-describe(`${N_APPEND} typed appends (define vs facade.withSchema)`, () => {
+describe(`${N_APPEND} typed appends (define vs legacy facade.withSchema)`, () => {
   bench(`define`, async () => {
     const s = DurableStream.define({
       endpoint: { url: server.streamUrl(`ap-def`) },
