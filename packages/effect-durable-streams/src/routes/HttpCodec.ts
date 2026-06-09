@@ -1,13 +1,16 @@
 /**
- * HTTP decode/encode for the raw stream data plane. Routes are thin: they
- * decode an `HttpServerRequest` into a `Store` input, call the store, and lower
- * the `Store` decision back into an `HttpServerResponse`. All protocol decisions
- * live in the store; this module only translates the wire format.
+ * Route HTTP codec (the boundary ADAPTER): decode an `HttpServerRequest` into a
+ * `Store` input and lower a `Store` decision into an `HttpServerResponse`. This
+ * module deliberately depends on BOTH the wire schemas (`../schema.ts`,
+ * `../headers.ts`) and `Store` — that is what makes it the adapter. The
+ * dependency direction is: wire schema -> route adapter (this) -> store. The
+ * pure wire schemas/constants live in `../schema.ts` and `../headers.ts`; no
+ * `Store` type leaks into those.
  */
 import { HttpServerResponse } from "@effect/platform"
 import { Effect, Option, Schema } from "effect"
-import * as ProtocolError from "./ProtocolError.ts"
-import { UintFromString } from "./schema.ts"
+import * as ProtocolError from "../ProtocolError.ts"
+import { UintFromString } from "../schema.ts"
 import {
   PRODUCER_EPOCH,
   PRODUCER_EXPECTED_SEQ,
@@ -21,8 +24,8 @@ import {
   STREAM_CLOSED,
   STREAM_NEXT_OFFSET,
   STREAM_UP_TO_DATE,
-} from "./headers.ts"
-import type * as Store from "./Store.ts"
+} from "../headers.ts"
+import type * as Store from "../Store.ts"
 import type { HttpServerRequest } from "@effect/platform"
 
 const CONTENT_TYPE = `content-type`
@@ -89,8 +92,6 @@ const decodeProducer = (
 
 const isClosedHeader = (headers: Record<string, string | undefined>): boolean =>
   (headers[REQ_STREAM_CLOSED] ?? ``).toLowerCase() === `true`
-
-const pathFromSplat = (splat: string): Store.StreamPath => splat
 
 /**
  * Decode an append (`POST`) request into a `Store.AppendInput`. Performs JSON
@@ -253,5 +254,3 @@ export const headToResponse = (
       ...(tail.closed ? { [STREAM_CLOSED]: `true` } : {}),
     },
   })
-
-export { pathFromSplat }

@@ -17,8 +17,8 @@ import {
 } from "@effect/platform"
 import { Effect, Option } from "effect"
 import * as ProtocolError from "../ProtocolError.ts"
-import * as Protocol from "../protocol.ts"
 import * as Store from "../Store.ts"
+import * as HttpCodec from "./HttpCodec.ts"
 
 const RESERVED_SEGMENT = `__ds`
 
@@ -75,7 +75,7 @@ export const create = handle(
     const path = yield* resolvePath
     const request = yield* HttpServerRequest.HttpServerRequest
     const body = yield* readBody
-    const input = yield* Protocol.decodeCreate(request, path, body)
+    const input = yield* HttpCodec.decodeCreate(request, path, body)
     const decision = yield* Store.Store.pipe(
       Effect.flatMap((store) => store.createStream(input)),
       Effect.tap((d) =>
@@ -83,7 +83,7 @@ export const create = handle(
       ),
       Effect.withSpan(`stream.create`, { attributes: { "ds.stream": path } })
     )
-    return Protocol.createDecisionToResponse(decision, input.contentType)
+    return HttpCodec.createDecisionToResponse(decision, input.contentType)
   })
 )
 
@@ -92,7 +92,7 @@ export const append = handle(
     const path = yield* resolvePath
     const request = yield* HttpServerRequest.HttpServerRequest
     const body = yield* readBody
-    const input = yield* Protocol.decodeAppend(request, path, body)
+    const input = yield* HttpCodec.decodeAppend(request, path, body)
     // Production observation seam: the `stream.append` span carries the stream,
     // close flag, producer presence, and the append DECISION tag — which encodes
     // producer validation + epoch/seq outcome (ProducerAccepted/Duplicate/
@@ -111,7 +111,7 @@ export const append = handle(
         },
       })
     )
-    return Protocol.appendDecisionToResponse(result.append)
+    return HttpCodec.appendDecisionToResponse(result.append)
   })
 )
 
@@ -121,7 +121,7 @@ export const head = handle(
     const tail = yield* Store.Store.pipe(
       Effect.flatMap((store) => store.head(path))
     )
-    return Protocol.headToResponse(tail)
+    return HttpCodec.headToResponse(tail)
   })
 )
 
@@ -138,7 +138,7 @@ export const read = handle(
         attributes: { "ds.stream": path, "ds.offset": offset },
       })
     )
-    return Protocol.readChunkToResponse(chunk, offset)
+    return HttpCodec.readChunkToResponse(chunk, offset)
   })
 )
 
