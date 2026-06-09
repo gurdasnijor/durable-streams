@@ -26,7 +26,6 @@ import type * as Store from "./Store.ts"
 import type { HttpServerRequest } from "@effect/platform"
 
 const CONTENT_TYPE = `content-type`
-const JSON_CT = `application/json`
 
 /** Normalize a content type to its media type (strip parameters), lowercased. */
 const normalizeContentType = (ct: string | undefined): string => {
@@ -42,40 +41,11 @@ const headerValue = (
   return v === undefined ? Option.none() : Option.some(v)
 }
 
-/**
- * Apply JSON append normalization (HTTP.6) for `application/json` streams:
- * one-level array flattening (the elements become the appended bytes, message
- * boundaries preserved) and empty-array rejection on POST. For the byte-store
- * model in this slice we re-serialize the flattened elements concatenated; this
- * preserves the in-scope semantics (mismatch detection, byte round-trip) while
- * full JSON-mode boundary indexing remains out of scope.
- */
-const normalizeJsonAppendBody = (
-  body: Uint8Array,
-  isPut: boolean
-): Effect.Effect<Uint8Array, ProtocolError.BadRequest> => {
-  if (body.length === 0) return Effect.succeed(body)
-  const text = new TextDecoder().decode(body)
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    // Not valid JSON; pass through unchanged (store treats it as opaque bytes).
-    return Effect.succeed(body)
-  }
-  if (Array.isArray(parsed)) {
-    if (parsed.length === 0) {
-      // Empty array: allowed as an empty create on PUT, rejected on POST.
-      if (isPut) return Effect.succeed(new Uint8Array(0))
-      return Effect.fail(
-        new ProtocolError.BadRequest({ reason: `empty JSON array on POST` })
-      )
-    }
-    const flattened = parsed.map((el) => JSON.stringify(el)).join(``)
-    return Effect.succeed(new TextEncoder().encode(flattened))
-  }
-  return Effect.succeed(body)
-}
+// NOTE: HTTP.6 (JSON append normalization — one-level array flattening with
+// preserved message boundaries) is DEFERRED / out of scope for this slice. The
+// memory store is a flat byte buffer with no per-message boundary index, so it
+// cannot preserve JSON message boundaries; request bodies are stored as opaque
+// bytes. Full JSON mode is a separate, later piece of work.
 
 /**
  * The producer tuple as a `Schema` over the request headers: header names map to
@@ -135,20 +105,13 @@ export const decodeAppend = (
   Effect.gen(function* () {
     const headers = request.headers
     const producer = yield* decodeProducer(headers)
-    // F1 enforced at the HTTP boundary: an epoch advance presented with a
-    // non-zero seq for a producer is a malformed request (400). (The store
-    // additionally models this as ProducerGap(expected:0) for the decision
-    // unit tests; the conformance HTTP probe expects 400.)
     const contentType = normalizeContentType(headers[CONTENT_TYPE])
     const close = isClosedHeader(headers)
-    const body =
-      contentType === JSON_CT
-        ? yield* normalizeJsonAppendBody(rawBody, false)
-        : rawBody
+    // Body is stored as opaque bytes (HTTP.6 JSON normalization deferred).
     return {
       path,
       contentType,
-      body,
+      body: rawBody,
       close,
       streamSeq: headerValue(headers, REQ_STREAM_SEQ),
       producer,
@@ -160,15 +123,17 @@ export const decodeCreate = (
   path: Store.StreamPath,
   rawBody: Uint8Array
 ): Effect.Effect<Store.CreateInput, ProtocolError.BadRequest> =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const headers = request.headers
     const contentType = normalizeContentType(headers[CONTENT_TYPE])
     const close = isClosedHeader(headers)
-    const body =
-      contentType === JSON_CT
-        ? yield* normalizeJsonAppendBody(rawBody, true)
-        : rawBody
-    return { path, contentType, body, close } satisfies Store.CreateInput
+    // Body is stored as opaque bytes (HTTP.6 JSON normalization deferred).
+    return {
+      path,
+      contentType,
+      body: rawBody,
+      close,
+    } satisfies Store.CreateInput
   })
 
 /** Lower an `AppendDecision` into the protocol HTTP response (HTTP.5). */
