@@ -17,6 +17,8 @@ components:
       3: "Server, client, and execution concerns are separated so they may evolve in unison without importing across implementation boundaries."
       4: "Durable sleep, signal, awakeable, durable promise, state-change wait, child, and attachment features lower to client primitives rather than package-owned schedulers, predicate registries, or dedupe stores."
       5: "The public API uses execution, handler, operation, step, signal, awakeable, and deferred vocabulary; invocation is the internal durable run identity and session is left to application/host naming."
+      6: "Authoritative domain state, which may be ingress- or webhook-written and is wait-observable, is kept separate from derived execution-metadata projections; only authoritative domain facts satisfy waits."
+      7: "Execution either supports an in-process or co-located operation-log binding or explicitly budgets the per-step remote append cost; the package does not hide that a remote durable step is one round-trip plus fsync and that sequential durable steps do not batch."
   JOURNAL:
     requirements:
       1: "The package owns the keyed replay fold over application step events."
@@ -27,6 +29,9 @@ components:
       6: "The step replay fold consumes only terminal step outcome events for skip/replay decisions."
       7: "The invocation replay fold consumes lifecycle, step, timer, wait, signal, deferred, child, cancellation, and state events to reconstruct runtime state."
       8: "`StepStarted` and attempt metadata are observability facts and must not cause a step action to be skipped."
+      9: "Invocation replay may start from a folded invocation-state snapshot at a checkpoint watermark and apply only the operation-log tail after that watermark, rather than folding the entire log on every activation."
+      10: "`operationLogWatermark` is a replay checkpoint that bounds where snapshot-based replay resumes, not only a materialization marker."
+      11: "Large or hot keyed state may be checkpointed or stored outside the operation log and referenced from a snapshot rather than re-folded from every log event."
   API:
     requirements:
       1: "`run` records named durable steps and replays recorded successes or failures."
@@ -62,6 +67,12 @@ components:
       25: "`waitForState` waits for a schema-bound `@durable-streams/state` resource or collection change through a filtered Durable Streams subscription and materialization."
       26: "Generic `waitForEvent` may exist only as an ergonomic umbrella over source-specific waits after sleep, signal, awakeable, deferred, and state-change semantics remain distinguishable."
       27: "Webhook-originated signals are modeled as host-verified durable event or state facts, or as awakeable resolutions, not as a separate handler-facing wait backend."
+      28: "Durable program bodies must be deterministic outside keyed `run`; wall-clock reads, random values, generated UUIDs, positional counters, and branches on wall-clock are replay-unsafe and must be captured inside `run`."
+      29: "Durable waits race through the typed `select` helper resolved by earliest operation-log offset; `Effect.race` and `Effect.raceAll` are local-effect tools and must not be used to race durable waits."
+      30: "`state()` writes lower to durable operation-log facts so replay is deterministic, while `sharedState()` exposes reads only; neither relies on a live re-read to reconstruct state during replay."
+      31: "`waitForState` freezes the matched value into the `StateWaitSatisfied` fact; replay returns the captured value rather than re-reading live state."
+      32: "Step idempotency keys auto-derive from `${invocationId}:${stepKey}`; a caller override exists only to match an external API's required key format and must remain stable across replays."
+      33: "Routines coordinated by `channel` are local and re-run on replay; any side effect inside such a routine must go through keyed `run` or replay duplicates it."
   RESUME:
     requirements:
       1: "Durable sleep lowers to scheduled append plus wake/materialization."
@@ -71,6 +82,8 @@ components:
       5: "The package does not own a worker loop, host scheduler, webhook ingress policy, or transport listener."
       6: "State/resource waits lower to `@durable-streams/state` event streams, server-side filtered subscription wake, and schema-decoded materialization."
       7: "Webhook ingress lowers to host verification, schema decode, durable fact append, and the same filtered wake/materialization path as other event or state waits."
+      8: "Awakeable settle-once lowers to a dedicated stream settled by an atomic append-and-close, achieving cross-process settle-once through closure monotonicity and producer idempotence."
+      9: "Deferred settle-once lowers to an operation-log fact settled by the epoch-holding executor."
   DELIVERY:
     requirements:
       1: "Wake delivery is treated as at-least-once; effectively-once execution is achieved by replaying the invocation operation log before running missing steps."
@@ -81,6 +94,7 @@ components:
       6: "When using a single-writer invocation operation-log design, the operation-log producer epoch is the write-authority fence; subscription generation fences are liveness hints and ack guards, not the operation-log correctness fence."
       7: "Producer epoch fencing and producer sequence deduplication are both required: epoch rejects stale writers, while sequence deduplicates retry-ambiguous appends from the current writer."
       8: "A colocated SQL/PGlite host may observe derived ready-work tables through live query or changefeed APIs instead of external pull-wake polling, but activation still replays the operation log and acks only after a durable outcome or suspension intent."
+      9: "Producer-epoch auto-claim must be compare-and-set; producer epoch is the correctness fence while subscription lease/generation is the liveness fence, and concurrent executors without a single-claimant lease can epoch-ping-pong or livelock even though stale appends are rejected."
   INVOCATION:
     requirements:
       1: "The package defines invocation and step metadata event schemas for host platforms to materialize lifecycle state."
@@ -90,6 +104,8 @@ components:
       5: "Step metadata records step key, status, attempt, started timestamp, completed timestamp, and encoded success or failure reference."
       6: "Invocation and step projection events may be emitted as `@durable-streams/state` state change events for `MaterializedState` or StreamDB consumers."
       7: "`@durable-streams/state` materializations are read/query projections and are not the authoritative operation log."
+      8: "Invocation metadata may record a snapshot/checkpoint reference and watermark so replay can resume from a folded snapshot instead of the full operation log."
+      9: "Derived execution-metadata projections (invocations, steps, signal waits, awakeables, deferreds) are non-authoritative read models over the operation log; they must not affect replay or become wait-authoritative."
   USERLAND:
     requirements:
       1: "The public surface is sufficient for users to build their own durable execution platform on top."
@@ -131,6 +147,18 @@ components:
       28: "Execution conformance proves `waitForState` lowers to a filtered subscription plus replay/materialization and does not implement a client-side polling loop."
       29: "Execution conformance proves webhook-originated durable facts resume matching waits only after the fact append is durable."
       30: "Execution conformance proves sleep, signal, awakeable, deferred, state-change wait, and channel have distinct identity, scope, durability, and completion semantics."
+      31: "Execution conformance proves snapshot-based replay from a checkpoint watermark applies only the operation-log tail after the watermark and reconstructs the same runtime state as full-log replay."
+      32: "Execution conformance proves non-deterministic values produced outside keyed `run` are detected as replay-unsafe body divergence rather than silently accepted."
+      33: "Execution conformance proves that when multiple durable waits have satisfying facts on replay, `select` resolves to the wait whose satisfying fact has the earliest operation-log offset, deterministically across replays."
+      34: "Execution conformance proves `state()` writes replay deterministically from operation-log facts without a live re-read."
+      35: "Execution conformance proves `waitForState` replay returns the value frozen into `StateWaitSatisfied` even when live state has since changed."
+      36: "Execution conformance proves `waitForState` resolves only on authoritative domain-state or event facts and never on derived execution-metadata projection collections."
+      37: "Execution conformance proves an awakeable resolution after its settling append-and-close is rejected or ignored, giving cross-process settle-once."
+      38: "Execution conformance proves the default step idempotency key equals `${invocationId}:${stepKey}` and is stable across replays, and a caller override is reused verbatim on replay."
+      39: "Execution conformance proves a side effect inside a channel-coordinated routine executes once across replays only when wrapped in keyed `run`, and duplicates when it is not."
+      40: "Execution conformance proves producer-epoch auto-claim is compare-and-set so a stale claimant loses, and that concurrent claimants make progress only under a single-claimant lease."
+      41: "Execution conformance proves deferred is settled as an operation-log fact by the epoch-holding executor, distinct from the awakeable append-and-close stream lowering."
+      42: "Execution conformance proves the OperationLog adapter contract is satisfied by both a remote Durable Streams binding and an in-process or co-located binding, so execution correctness is not coupled to remote transport."
 
 constraints:
   SCOPE:
