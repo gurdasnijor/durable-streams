@@ -78,8 +78,17 @@ const make = (db: Database<Uint8Array, Uint8Array>): OrderedKvStoreService => ({
       })
     ),
   writeTxn: (f) =>
-    Effect.try({
-      try: () => db.transactionSync(() => f(makeTxn(db))),
+    // effect-server.STORE: lmdb-js `transactionSync` commits the write
+    // transaction in memory but returns BEFORE the async disk flush completes.
+    // Await `db.flushed` so the returned Effect does not resolve (and append
+    // success is not signaled) until the bytes are durable. Without this an
+    // acked append can be lost on crash, gating any durable-backend claim.
+    Effect.tryPromise({
+      try: async () => {
+        const result = db.transactionSync(() => f(makeTxn(db)))
+        await db.flushed
+        return result
+      },
       catch: driverError(`writeTxn`),
     }),
 })
